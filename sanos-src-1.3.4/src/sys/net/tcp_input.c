@@ -158,6 +158,7 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
     {
       for (pcb = (struct tcp_pcb *) tcp_listen_pcbs; pcb != NULL; pcb = pcb->next) 
       {
+      	//目的端口必须相等
         if ((ip_addr_isany(&pcb->local_ip) || ip_addr_cmp(&pcb->local_ip, &iphdr->dest)) &&
              pcb->local_port == tcphdr->dest) 
         {
@@ -315,6 +316,7 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
   // Process incoming RST segments
   if (flags & TCP_RST) 
   {
+  //如果处于监听状态，reset无效
     // First, determine if the reset is acceptable
     if (pcb->state != LISTEN) 
     {
@@ -377,10 +379,13 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
         }
         
         // Set up the new PCB
+        //从监听pcb中拷贝端口
+        //拷贝4元祖
         ip_addr_set(&npcb->local_ip, &iphdr->dest);
         npcb->local_port = pcb->local_port;
         ip_addr_set(&npcb->remote_ip, &iphdr->src);
         npcb->remote_port = tcphdr->src;
+	
         npcb->state = SYN_RCVD;
         npcb->rcv_nxt = seqno + 1;
         npcb->snd_wnd = tcphdr->wnd;
