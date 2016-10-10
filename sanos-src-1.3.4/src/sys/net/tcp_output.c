@@ -56,6 +56,7 @@ err_t tcp_write(struct tcp_pcb *pcb, const void *data, int len, int opt)
   {
     if (len > 0) 
     {
+    	//排队， tcp 必须按序发送
       rc = tcp_enqueue(pcb, (void *) data, len, 0, NULL, 0);
       if (rc < 0) return rc;
     }
@@ -70,7 +71,7 @@ err_t tcp_write(struct tcp_pcb *pcb, const void *data, int len, int opt)
       // segments when new outgoing data arrives from the user if any
       // previously transmitted data on the connection remains
       // unacknowledged.
-
+	//nagle算法，如果还有未被确认的段，则本次不启动发送
       if (pcb->unacked == NULL) tcp_output(pcb);
     }
 
@@ -92,15 +93,16 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
   void *ptr;
   int queuelen;
 
-  left = len;
   ptr = data;
-  
+  left = len;
+   
   if (len > pcb->snd_buf) 
   {
     kprintf(KERN_ERR "tcp_enqueue: too much data %d\n", len);
     return -ENOMEM;
   }
 
+	//本次发送数据包的起始序列号
   seqno = pcb->snd_lbb;
   
   queue = NULL;
@@ -112,6 +114,9 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
   }
   
   // Fill last pbuf of the last segment on the unsent queue
+  //如果optlen == 0，表示没有tcp选项，
+  //那么可以利用未发送队列中的剩余空间
+  //而不需要重新分配pbuf
   if (optlen == 0 && flags == 0)
   {
     // Go to the last segment on the unsent queue
@@ -121,6 +126,8 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
     } 
     else 
     {
+    //遍历到最后一个段，
+    //发送队列是按序列号升序排列
       for (useg = pcb->unsent; useg->next != NULL; useg = useg->next);
     }
 
@@ -128,9 +135,11 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
     {
       p = useg->p;
       while (p->next) p = p->next;
-
+	  
+	//计算最后一个buffer是否有剩余空间
       buflen = pbuf_spare(p);
       if (buflen > left) buflen = left;
+	  //加上len后发送的tcp段不能超过mss
       if (useg->len + buflen > pcb->mss) buflen = pcb->mss - useg->len;
 
       if (buflen > 0)
@@ -150,10 +159,13 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
   // Split rest of data into segments
   seg = NULL;
   seglen = 0;
+  //left 还有剩余数据需要发送
+  //只有重新分配pbuf
   if (left > 0 || optlen > 0 || flags)
   {
     while (queue == NULL || left > 0) 
     {
+    //如果left大于mss，需要切割成小段
       seglen = (left > pcb->mss ? pcb->mss : left);
 
       // Allocate memory for tcp_seg, and fill in fields
@@ -172,6 +184,7 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
       } 
       else 
       {
+      //seq插入queue 链表末尾
         for (useg = queue; useg->next != NULL; useg = useg->next);
         useg->next = seg;
       }
@@ -189,6 +202,7 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
       } 
       else
       {
+      	//计算本次需要分配的长度
         size = seglen;
         if (seglen < TCP_MIN_SEGLEN) 
         {
@@ -297,6 +311,7 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
   }
 
   if ((flags & TCP_SYN) || (flags & TCP_FIN)) len++;
+  //更新下次发送的起始序列号
   pcb->snd_lbb += len;
   pcb->snd_buf -= len;
   pcb->snd_queuelen = queuelen;
@@ -312,7 +327,8 @@ err_t tcp_enqueue(struct tcp_pcb *pcb, void *data, int len, int flags, unsigned 
 
 memerr:
   stats.tcp.memerr++;
-
+//释放所有本次分配的空间
+//有BUG，部分插入的数据没有释放
   if (queue != NULL) tcp_segs_free(queue);
   return -ENOMEM;
 }
@@ -329,6 +345,7 @@ err_t tcp_output(struct tcp_pcb *pcb)
   while (seg != NULL && ntohl(seg->tcphdr->seqno) - pcb->lastack + seg->len <= wnd) 
   {
     pcb->rtime = 0;
+	//指向下一个待发送的段
     pcb->unsent = seg->next;
     
     if (pcb->state != SYN_SENT) 
@@ -350,10 +367,11 @@ err_t tcp_output(struct tcp_pcb *pcb)
       } 
       else 
       {
+      //将seg放入链表末尾
         for (useg = pcb->unacked; useg->next != NULL; useg = useg->next);
         useg->next = seg;
       }
-
+	//发送段
       tcp_output_segment(seg, pcb);
     }
     else
@@ -361,7 +379,7 @@ err_t tcp_output(struct tcp_pcb *pcb)
       tcp_output_segment(seg, pcb);
       tcp_seg_free(seg);
     }
-
+	//获取待发送的段
     seg = pcb->unsent;
   } 
   
@@ -369,6 +387,7 @@ err_t tcp_output(struct tcp_pcb *pcb)
   // construct the ACK and send it
   if (pcb->flags & TF_ACK_NOW) 
   {
+  //纯ack不需要保留副本
     pcb->flags &= ~(TF_ACK_DELAY | TF_ACK_NOW);
     return tcp_send_ack(pcb);
   }

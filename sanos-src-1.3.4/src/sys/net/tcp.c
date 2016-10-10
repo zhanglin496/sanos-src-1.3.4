@@ -639,6 +639,7 @@ struct tcp_pcb *tcp_new()
   pcb->rtime = 0;
   pcb->cwnd = 1;
   iss = tcp_next_iss();
+  //还没有发送数据，设置为随机值
   pcb->snd_wl2 = iss;
   pcb->snd_nxt = iss;
   pcb->snd_max = iss;

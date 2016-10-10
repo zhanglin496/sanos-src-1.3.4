@@ -70,7 +70,9 @@ static int fill_sndbuf(struct socket *s, struct iovec *iov, int iovlen)
       {
         len = iov->iov_len;
         if (len > left) len = left;
-
+	//这里实现也有问题
+	//假设第一次写成功
+	//第二次写失败
         rc = tcp_write(s->tcp.pcb, iov->iov_base, len, TCP_WRITE_NOFLUSH);
         if (rc < 0) return rc;
 

@@ -65,6 +65,7 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
   //tcp_debug_print(tcphdr);
 
   // Remove header from payload
+  //p->payload 指向tcp 头
   if (pbuf_header(p, -(IPH_HL(iphdr) * 4)) < 0 || p->tot_len < sizeof(struct tcp_hdr))
   {
     kprintf("tcp_input: short packet (%u bytes) discarded\n", p->tot_len);
@@ -98,6 +99,7 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
 
   // Move the payload pointer in the pbuf so that it points to 
   // the TCP data instead of the TCP header
+  //p->payload 指向tcp 负载
   offset = TCPH_OFFSET(tcphdr) >> 4;
   if (pbuf_header(p, -(offset * 4)) < 0) return -EINVAL;
 
@@ -388,8 +390,10 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
 	
         npcb->state = SYN_RCVD;
         npcb->rcv_nxt = seqno + 1;
+	//设置发送窗口和慢启动阀值
         npcb->snd_wnd = tcphdr->wnd;
         npcb->ssthresh = npcb->snd_wnd;
+	 //序列号减1
         npcb->snd_wl1 = tcphdr->seqno - 1;
         npcb->accept = pcb->accept;
         npcb->callback_arg = pcb->callback_arg;
@@ -417,12 +421,14 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
       if (flags & (TCP_ACK | TCP_SYN) && pcb->unacked && ackno == ntohl(pcb->unacked->tcphdr->seqno) + 1) 
       {
         pcb->rcv_nxt = seqno + 1;
+	//记录上次收到的ack seq
         pcb->lastack = ackno;
         pcb->snd_wnd = tcphdr->wnd;
         pcb->snd_wl1 = seqno - 1;
         pcb->state = ESTABLISHED;
         pcb->cwnd = pcb->mss;
         pcb->snd_queuelen--;
+	//释放已成功发送的syn段
         rseg = pcb->unacked;
         pcb->unacked = rseg->next;
         tcp_seg_free(rseg);
@@ -442,6 +448,8 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
     case SYN_RCVD:
       if (flags & TCP_ACK && !(flags & TCP_RST)) 
       {
+      //ack seq 在合法的范围内
+      //LISTEN状态的lastack和snd_lbb初始值相等
         if (TCP_SEQ_LT(pcb->lastack, ackno) && TCP_SEQ_LEQ(ackno, pcb->snd_nxt)) 
         {
           pcb->state = ESTABLISHED;
@@ -611,7 +619,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
             // This is fast retransmit. Retransmit the first unacked segment          
             //kprintf("tcp_receive: dupacks %d (%lu), fast retransmit %lu\n", pcb->dupacks, pcb->lastack, ntohl(pcb->unacked->tcphdr->seqno));
             tcp_rexmit(pcb);
-
+		//所谓flightsize，是指已经发送但未被确认的数据包
             // Set ssthresh to MAX(FlightSize / 2, 2 * SMSS)
             pcb->ssthresh = UMAX((unsigned long) (pcb->snd_max - pcb->lastack) / 2, (unsigned long) (2 * pcb->mss));
             pcb->cwnd = pcb->ssthresh + 3 * pcb->mss;

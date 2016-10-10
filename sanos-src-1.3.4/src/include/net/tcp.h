@@ -162,6 +162,7 @@ struct tcp_pcb
   unsigned short remote_port;
   
   // Receiver variables
+  //期望接收序列号
   unsigned long rcv_nxt;   // Next seqno expected
   unsigned short rcv_wnd;  // Receiver window
 
@@ -195,11 +196,15 @@ struct tcp_pcb
   unsigned long snd_nxt;  // Next seqno to be sent
   unsigned long snd_max;  // Highest seqno sent
   unsigned long snd_wnd;  // Sender window
+  //上次窗口更新时的序列号
   unsigned long snd_wl1;  // Sequence number of last window update
+   //上次窗口更新时的确认序列号
   unsigned long snd_wl2;  // Acknowlegement number of last window update
+  //发送队列下次发送的数据包起始序列号
   unsigned long snd_lbb;  // Sequence number of next byte to be buffered
 
   unsigned short snd_buf; // Avaliable buffer space for sending
+  //unsent 发送队列长度
   unsigned short snd_queuelen;
 
   // Function to be called when more send buffer space is available

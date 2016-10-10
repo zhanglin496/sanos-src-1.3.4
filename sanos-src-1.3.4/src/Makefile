@@ -5,13 +5,13 @@
 all: sdk apps
 
 sdk:
-    make -C utils/as
-    make -C utils/cc
-    make -C utils/ar
-    make -C utils/make
-    make -C utils/impdef
-    make -C utils/makedepend
-    make -C lib
+	make -C utils/as
+	make -C utils/cc
+	make -C utils/ar
+	make -C utils/make
+	make -C utils/impdef
+	make -C utils/makedepend
+	make -C lib
 
 apps:
     make -C utils/ctohtml
