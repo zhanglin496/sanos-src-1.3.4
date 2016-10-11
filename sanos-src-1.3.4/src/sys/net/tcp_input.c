@@ -318,7 +318,7 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
   // Process incoming RST segments
   if (flags & TCP_RST) 
   {
-  //如果处于监听状态，reset无效
+  //如果处于监听状态，reset无效,rfc 要求
     // First, determine if the reset is acceptable
     if (pcb->state != LISTEN) 
     {
@@ -328,7 +328,9 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
       } 
       else 
       {
-        if (TCP_SEQ_GEQ(seqno, pcb->rcv_nxt) && TCP_SEQ_LEQ(seqno, pcb->rcv_nxt + pcb->rcv_wnd)) acceptable = 1;
+      //seq序列号要在窗口内
+        if (TCP_SEQ_GEQ(seqno, pcb->rcv_nxt) && TCP_SEQ_LEQ(seqno, pcb->rcv_nxt + pcb->rcv_wnd)) 
+			acceptable = 1;
       }
     }
 
@@ -588,9 +590,10 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
 
   ackno = seg->tcphdr->ackno;
   seqno = seg->tcphdr->seqno;
-
+//如果设置了ACK
   if (TCPH_FLAGS(seg->tcphdr) & TCP_ACK) 
   {
+  	//计算窗口右边沿
     right_wnd_edge = pcb->snd_wnd + pcb->snd_wl1;
 
     // Update window
@@ -604,11 +607,11 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
 
       //kprintf("tcp_receive: window update %lu\n", pcb->snd_wnd);
     }
-
+	//重复ack 检查
     if (pcb->lastack == ackno) 
     {
       pcb->acked = 0;
-
+	//
       if (pcb->snd_wl1 + pcb->snd_wnd == right_wnd_edge)
       {
         pcb->dupacks++;
@@ -633,6 +636,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
         }
       }
     } 
+	//ack确认了新的数据
     else if (TCP_SEQ_LT(pcb->lastack, ackno) && TCP_SEQ_LEQ(ackno, pcb->snd_max)) 
     {
       // We come here when the ACK acknowledges new data
@@ -653,11 +657,13 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       pcb->rto = (pcb->sa >> 3) + pcb->sv;
       
       // Update the send buffer space
+      //计算确认了多少数据
       pcb->acked = (unsigned short) (ackno - pcb->lastack);
       pcb->snd_buf += pcb->acked;
 
       // Reset the fast retransmit variables
       pcb->dupacks = 0;
+	//记录本次收到的ack序列号
       pcb->lastack = ackno;
       
       // Update the congestion control variables (cwnd and ssthresh)
@@ -689,6 +695,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
         //         ntohl(pcb->unacked->tcphdr->seqno) +
         //         TCP_TCPLEN(pcb->unacked));
 
+	//释放已近确认的数据段
         next = pcb->unacked;
         pcb->unacked = pcb->unacked->next;
         pcb->snd_queuelen -= pbuf_clen(next->p);
@@ -851,7 +858,8 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
           seg->len = pcb->ooseq->tcphdr->seqno - seqno;
           pbuf_realloc(seg->p, seg->len);
         }
-        
+		
+        //更新rcv_nxt
         pcb->rcv_nxt += TCP_TCPLEN(seg);        
         
         // Update the receiver's (our) window
@@ -927,6 +935,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       } 
       else 
       {
+      //收到乱序报文段
         // We get here if the incoming segment is out-of-sequence.
         pcb->flags |= TF_ACK_NOW;
         //kprintf("tcp_receive: out-of-order segment received\n");
@@ -1068,6 +1077,8 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
   {
     // Segments with length 0 is taken care of here. Segments that
     // fall out of the window are ACKed
+    //在窗口之外的纯ack，要发送一个确认ack
+    //否则丢弃
     if (TCP_SEQ_GT(pcb->rcv_nxt, seqno) || TCP_SEQ_GEQ(seqno, pcb->rcv_nxt + pcb->rcv_wnd)) 
     {
       pcb->flags |= TF_ACK_NOW;
