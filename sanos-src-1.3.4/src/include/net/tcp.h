@@ -185,6 +185,9 @@ struct tcp_pcb
   unsigned short nrtx;    // Number of retransmissions
 
   // Fast retransmit/recovery
+  //上次收到的ack序列号，相当于rfc的snd_una
+  //只会在按序收到对端的ack时，才会更新此字段
+  //应该采用rfc的建议使用snd_una，便于理解
   unsigned long lastack;  // Highest acknowledged seqno
   unsigned short dupacks;
   
@@ -194,13 +197,17 @@ struct tcp_pcb
 
   // Sender variables
   unsigned long snd_nxt;  // Next seqno to be sent
+  //用于检测重传
   unsigned long snd_max;  // Highest seqno sent
   unsigned long snd_wnd;  // Sender window
   //上次窗口更新时的序列号
   unsigned long snd_wl1;  // Sequence number of last window update
    //上次窗口更新时的确认序列号
   unsigned long snd_wl2;  // Acknowlegement number of last window update
-  //发送队列下次发送的数据包起始序列号
+  //下次发送的数据包应该分配的起始序列号
+  //用于管理发送序列号空间的分配
+  //用于应用层发送数据时的序列号选择
+  //主要在tcp_enqueue中调用
   unsigned long snd_lbb;  // Sequence number of next byte to be buffered
 
   unsigned short snd_buf; // Avaliable buffer space for sending

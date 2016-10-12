@@ -322,9 +322,16 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
     // First, determine if the reset is acceptable
     if (pcb->state != LISTEN) 
     {
+   
       if (pcb->state == SYN_SENT) 
       {
-        if (ackno == pcb->snd_nxt) acceptable = 1;
+      //按照rfc要求，应该检查ack 是否在窗口内
+      //addby zhangl
+	if (flags & TCP_ACK && TCP_SEQ_GT(ackno, pcb->lastack) && 
+		TCP_SEQ_LEQ(ackno, pcb->snd_nxt)) {
+		//if (ackno == pcb->snd_nxt) 
+			acceptable = 1;
+      	}
       } 
       else 
       {
@@ -423,7 +430,7 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
       if (flags & (TCP_ACK | TCP_SYN) && pcb->unacked && ackno == ntohl(pcb->unacked->tcphdr->seqno) + 1) 
       {
         pcb->rcv_nxt = seqno + 1;
-	//记录上次收到的ack seq
+	//记录本次收到的ack seq
         pcb->lastack = ackno;
         pcb->snd_wnd = tcphdr->wnd;
         pcb->snd_wl1 = seqno - 1;
@@ -448,6 +455,8 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
       break;
 
     case SYN_RCVD:
+		//这里处理有问题
+		//没有正确处理rst 的情况
       if (flags & TCP_ACK && !(flags & TCP_RST)) 
       {
       //ack seq 在合法的范围内
@@ -607,11 +616,11 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
 
       //kprintf("tcp_receive: window update %lu\n", pcb->snd_wnd);
     }
-	//重复ack 检查
+	//重复ack 检查，相等，未确认新的数据
     if (pcb->lastack == ackno) 
     {
       pcb->acked = 0;
-	//
+	//检查是否是dup ack，这里检查原理不是很明白
       if (pcb->snd_wl1 + pcb->snd_wnd == right_wnd_edge)
       {
         pcb->dupacks++;
@@ -624,6 +633,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
             tcp_rexmit(pcb);
 		//所谓flightsize，是指已经发送但未被确认的数据包
             // Set ssthresh to MAX(FlightSize / 2, 2 * SMSS)
+            //pcb->snd_max - pcb->lastack 计算发送但尚未被确认的数据
             pcb->ssthresh = UMAX((unsigned long) (pcb->snd_max - pcb->lastack) / 2, (unsigned long) (2 * pcb->mss));
             pcb->cwnd = pcb->ssthresh + 3 * pcb->mss;
             pcb->flags |= TF_INFR;
@@ -968,7 +978,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
               // same as the sequence number of the segment on
               // ->ooseq. We check the lengths to see which one to
               // discard.
-
+		//如果序列号相等，丢弃长度较短的数据包
               if (seg->len > next->len) 
               {
                 // The incoming segment is larger than the old

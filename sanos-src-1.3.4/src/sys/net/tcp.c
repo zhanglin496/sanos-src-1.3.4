@@ -333,7 +333,9 @@ err_t tcp_connect(struct tcp_pcb *pcb, struct ip_addr *ipaddr, unsigned short po
   if (pcb->local_port == 0) pcb->local_port = tcp_new_port();
   iss = tcp_next_iss();
   pcb->rcv_nxt = 0;
+  //下次要发送的序列号
   pcb->snd_nxt = iss;
+  //初始化期待的对端ack为iss -1
   pcb->lastack = iss - 1;
   pcb->snd_lbb = iss - 1;
   pcb->rcv_wnd = TCP_WND;

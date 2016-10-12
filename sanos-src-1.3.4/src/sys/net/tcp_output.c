@@ -353,7 +353,7 @@ err_t tcp_output(struct tcp_pcb *pcb)
       TCPH_FLAGS_SET(seg->tcphdr, TCPH_FLAGS(seg->tcphdr) | TCP_ACK);
       pcb->flags &= ~(TF_ACK_DELAY | TF_ACK_NOW);
     }
-    
+    //更新下一次需要发送的序列号
     pcb->snd_nxt = ntohl(seg->tcphdr->seqno) + TCP_TCPLEN(seg);
     if (TCP_SEQ_LT(pcb->snd_max, pcb->snd_nxt)) pcb->snd_max = pcb->snd_nxt;
 
