@@ -196,6 +196,9 @@ struct tcp_pcb
   unsigned long ssthresh;
 
   // Sender variables
+  //下次待发送的序列号
+  //这里的实现和rfc有些区别
+  //snd_nxt
   unsigned long snd_nxt;  // Next seqno to be sent
   //用于检测重传
   unsigned long snd_max;  // Highest seqno sent

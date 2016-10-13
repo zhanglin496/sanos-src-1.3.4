@@ -198,6 +198,7 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
       pcb->acked = 0;
     }
 
+//表示开始接收数据
     pcb->flags |= TF_IN_RECV;
 
     err = tcp_process(&seg, pcb);
@@ -209,7 +210,9 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
       {
         if (pcb->flags & TF_RESET) 
         {
-          if (pcb->errf != NULL) pcb->errf(pcb->callback_arg, -ERST);
+        //收到reset 报文段，释放tcb
+          if (pcb->errf != NULL) 
+		  	pcb->errf(pcb->callback_arg, -ERST);
 
           if (pcb->state == TIME_WAIT) 
             tcp_pcb_remove(&tcp_tw_pcbs, pcb);
@@ -231,16 +234,19 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
             
             // If the application has registered a "sent" function to be
             // called when new send buffer space is avaliable, we call it now
-
-            if (pcb->acked > 0 && pcb->sent != NULL) err = pcb->sent(pcb->callback_arg, pcb, pcb->acked);
             
+		//ack了新的数据，表示现在buffer 有空间可用
+            if (pcb->acked > 0 && pcb->sent != NULL) 
+				err = pcb->sent(pcb->callback_arg, pcb, pcb->acked);
+
+	  	//接收到新的数据，调用注册的recv函数
             if (pcb->recv != NULL)
             {
               if (pcb->recv_data != NULL)
               {
                 err = pcb->recv(pcb->callback_arg, pcb, pcb->recv_data, 0);
               }
-
+		//带有fin标志，通知应用进程
               if (pcb->flags & TF_GOT_FIN) 
               {
                 err = pcb->recv(pcb->callback_arg, pcb, NULL, 0);
@@ -250,7 +256,8 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
             {
               err = 0;
               pbuf_free(pcb->recv_data);
-              if (pcb->flags & TF_GOT_FIN) tcp_close(pcb);
+              if (pcb->flags & TF_GOT_FIN) 
+			tcp_close(pcb);
             }
 
             if (err == 0)
@@ -266,7 +273,8 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
         }
       }
     }
-    
+	//这里有BUG，在err == -EABORT情况下，pcb已经释放掉了
+    //去掉TF_IN_RECV标志，表示接收数据过程完成
     pcb->flags &= ~TF_IN_RECV;
     if (seg.p) pbuf_free(seg.p);
   }
@@ -275,11 +283,18 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
     // If no matching PCB was found, send a TCP RST (reset) to the sender
     kprintf("tcp_input: no PCB match found, resetting.\n");
 
+ 	//rfc: 如果收到的数据包带有rst 标志，不发送rst 报文
     if (!(TCPH_FLAGS(tcphdr) & TCP_RST)) 
     {
       stats.tcp.proterr++;
       stats.tcp.drop++;
-
+	//为什么syn和fin要占一个序列号
+	//从代码实现的角度理解
+	//若果不占一个序列号
+	//A: syn(seq)-> B
+	//B: syn(seq, ack==seq)-->A
+	//因为syn的长度是0
+	//所以B发出去的syn/ack 会被当做dup ack
       tcp_rst(tcphdr->ackno, tcphdr->seqno + p->tot_len +
               ((TCPH_FLAGS(tcphdr) & TCP_FIN || TCPH_FLAGS(tcphdr) & TCP_SYN) ? 1: 0),
               &iphdr->dest, &iphdr->src, tcphdr->dest, tcphdr->src);
@@ -345,6 +360,7 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
     {
       //kprintf("tcp_process: Connection RESET\n");
       pcb->flags |= TF_RESET;
+	  //立即发送ack
       pcb->flags &= ~TF_ACK_DELAY;
       return -ERST;
     } 
@@ -450,6 +466,7 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
         {
           pcb->connected(pcb->callback_arg, pcb, 0);
         }
+	//连接成功，默认延迟发送ack
         pcb->flags |= TF_ACK_DELAY;
       }    
       break;
@@ -498,6 +515,7 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
     case CLOSE_WAIT:
     case ESTABLISHED:
       tcp_receive(seg, pcb);
+	  //收到fin立即发送ack
       if (flags & TCP_FIN)
       {
         pcb->flags |= TF_ACK_NOW;
@@ -567,8 +585,10 @@ static err_t tcp_process(struct tcp_seg *seg, struct tcp_pcb *pcb)
       break;
 
     case TIME_WAIT:
-      if (TCP_SEQ_GT(seqno + TCP_TCPLEN(seg), pcb->rcv_nxt)) pcb->rcv_nxt = seqno + TCP_TCPLEN(seg);
-      if (TCP_TCPLEN(seg) > 0) pcb->flags |= TF_ACK_NOW;
+      if (TCP_SEQ_GT(seqno + TCP_TCPLEN(seg), pcb->rcv_nxt)) 
+	  	pcb->rcv_nxt = seqno + TCP_TCPLEN(seg);
+      if (TCP_TCPLEN(seg) > 0) 
+	  	pcb->flags |= TF_ACK_NOW;
       break;
   }
   
@@ -634,14 +654,20 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
 		//所谓flightsize，是指已经发送但未被确认的数据包
             // Set ssthresh to MAX(FlightSize / 2, 2 * SMSS)
             //pcb->snd_max - pcb->lastack 计算发送但尚未被确认的数据
+            //最大2个mss
             pcb->ssthresh = UMAX((unsigned long) (pcb->snd_max - pcb->lastack) / 2, (unsigned long) (2 * pcb->mss));
+		//减窗，重置拥塞窗口
             pcb->cwnd = pcb->ssthresh + 3 * pcb->mss;
             pcb->flags |= TF_INFR;
           } 
           else 
           {         
             // Inflate the congestion window, but not if it means that the value overflows
-            if ((unsigned short) (pcb->cwnd + pcb->mss) > pcb->cwnd) pcb->cwnd += pcb->mss;
+            //已经在快速恢复阶段
+            //增加拥塞窗口的值1个mss
+            //重新开始慢启动
+            if ((unsigned short) (pcb->cwnd + pcb->mss) > pcb->cwnd)
+				pcb->cwnd += pcb->mss;
           }
         }
       }
@@ -654,6 +680,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       // Reset the "IN Fast Retransmit" flag, since we are no longer
       // in fast retransmit. Also reset the congestion window to the
       // slow start threshold
+      //收到了新的ack，停止快速重传
       if (pcb->flags & TF_INFR) 
       {
         pcb->flags &= ~TF_INFR;
@@ -679,15 +706,25 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       // Update the congestion control variables (cwnd and ssthresh)
       if (pcb->state >= ESTABLISHED) 
       {
+      //小于慢启动阀值
+      //增加拥塞窗口mss
         if (pcb->cwnd < pcb->ssthresh) 
         {
+        	//每收到一个ack，增加一个mss
+        	//这里的实现是不允许超过65535
           if ((unsigned short) (pcb->cwnd + pcb->mss) > pcb->cwnd) pcb->cwnd += pcb->mss;
           //kprintf("tcp_receive: slow start cwnd %u\n", pcb->cwnd);
         }
         else
         {
+        //到达慢启动阀值
+        //更新拥塞窗口
+        //增窗方式和上面不一样，pcb->mss / pcb->cwnd一般是小于1的
+        //这里感觉没有设置上限
+        //减窗需要等待数据传输超时或收到dup ack
           unsigned short new_cwnd = (unsigned short) (pcb->cwnd + pcb->mss * pcb->mss / pcb->cwnd);
-          if (new_cwnd > pcb->cwnd) pcb->cwnd = new_cwnd;
+          if (new_cwnd > pcb->cwnd)
+			pcb->cwnd = new_cwnd;
           //kprintf("tcp_receive: congestion avoidance cwnd %u\n", pcb->cwnd);
         }
       }
@@ -873,6 +910,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
         pcb->rcv_nxt += TCP_TCPLEN(seg);        
         
         // Update the receiver's (our) window
+        //更新接收窗口
         if (pcb->rcv_wnd < TCP_TCPLEN(seg))
           pcb->rcv_wnd = 0;
         else

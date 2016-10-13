@@ -196,7 +196,9 @@ static err_t accept_tcp(void *arg, struct tcp_pcb *newpcb, err_t err)
     newsock = accept_connection(newpcb);
     if (!newsock) return -ENOMEM;
 
+//记录分配的newsock
     s->tcp.pending[s->tcp.numpending++] = newsock;
+//唤醒wait 在accept的进程
     set_io_event(&s->iob, IOEVT_ACCEPT);
 
     return 0;
@@ -309,7 +311,8 @@ static err_t recv_tcp(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
     }
   }
 
-  if (bytesrecv) tcp_recved(pcb, bytesrecv);
+  if (bytesrecv) 
+  	tcp_recved(pcb, bytesrecv);
   
   if (s->tcp.recvhead) 
     set_io_event(&s->iob, IOEVT_READ);
@@ -408,19 +411,23 @@ static int tcpsock_accept(struct socket *s, struct sockaddr *addr, int *addrlen,
   {
     if (s->flags & SOCK_NBIO) return -EAGAIN;
 
+	//当前没有连接，睡眠等待
     rc = submit_socket_request(s, &req, SOCKREQ_ACCEPT, NULL, INFINITE);
     if (rc < 0) return rc;
     newsock = req.newsock;
   }
   else
   {
+  //取第一个连接
     newsock = s->tcp.pending[0];
     if (--s->tcp.numpending > 0) 
     {
+    //向前移动数组
       memmove(s->tcp.pending, s->tcp.pending + 1, s->tcp.numpending * sizeof(struct socket *));
     }
-
-    if (s->tcp.numpending == 0) clear_io_event(&s->iob, IOEVT_ACCEPT);
+	//没有多余的连接
+    if (s->tcp.numpending == 0) 
+		clear_io_event(&s->iob, IOEVT_ACCEPT);
   }
 
   if (addr) 
@@ -631,8 +638,10 @@ static int tcpsock_listen(struct socket *s, int backlog)
   if (s->state != SOCKSTATE_BOUND) return -EINVAL;
 
   s->tcp.backlog = backlog;
+  //backlog  限制，这里是1:1的限制
   s->tcp.pending = kmalloc(sizeof(struct socket *) * backlog);
-  if (!s->tcp.pending) return -ENOMEM;
+  if (!s->tcp.pending) 
+  	return -ENOMEM;
 
   s->tcp.pcb = tcp_listen(s->tcp.pcb);
   if (!s->tcp.pcb) 

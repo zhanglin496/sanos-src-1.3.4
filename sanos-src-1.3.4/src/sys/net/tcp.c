@@ -147,17 +147,20 @@ err_t tcp_close(struct tcp_pcb *pcb)
 
     case SYN_RCVD:
       err = tcp_send_ctrl(pcb, TCP_FIN);
-      if (err == 0) pcb->state = FIN_WAIT_1;
+      if (err == 0) 
+	  	pcb->state = FIN_WAIT_1;
       break;
 
     case ESTABLISHED:
       err = tcp_send_ctrl(pcb, TCP_FIN);
-      if (err == 0) pcb->state = FIN_WAIT_1;
+      if (err == 0) 
+	  	pcb->state = FIN_WAIT_1;
       break;
 
     case CLOSE_WAIT:
       err = tcp_send_ctrl(pcb, TCP_FIN);
-      if (err == 0) pcb->state = LAST_ACK;
+      if (err == 0) 
+	  	pcb->state = LAST_ACK;
       break;
 
     default:
@@ -300,11 +303,14 @@ struct tcp_pcb *tcp_listen(struct tcp_pcb *pcb)
 
 void tcp_recved(struct tcp_pcb *pcb, int len)
 {
+//增加接收窗口，不超过TCP_WND
   pcb->rcv_wnd += len;
-  if (pcb->rcv_wnd > TCP_WND) pcb->rcv_wnd = TCP_WND;
+  if (pcb->rcv_wnd > TCP_WND) 
+  	pcb->rcv_wnd = TCP_WND;
   
   //if (!(pcb->flags & TF_ACK_DELAY) && !(pcb->flags & TF_ACK_NOW)) tcp_ack(pcb);
-  if (!(pcb->flags & TF_IN_RECV)) pcb->flags |= TF_ACK_DELAY;
+  if (!(pcb->flags & TF_IN_RECV)) 
+  	pcb->flags |= TF_ACK_DELAY;
 
   //kprintf("tcp_recved: received %d bytes, wnd %u (%u).\n", len, pcb->rcv_wnd, TCP_WND - pcb->rcv_wnd);
 }
@@ -405,9 +411,12 @@ void tcp_slowtmr(void *arg)
         tcp_rexmit(pcb);
 
         // Reduce congestion window and ssthresh
-        eff_wnd = MIN(pcb->cwnd, pcb->snd_wnd);
+        eff_wnd = MIN(pcb->cwnd, pcb->snd_wnd);\
+        //慢启动阀值减半
         pcb->ssthresh = eff_wnd >> 1;
-        if (pcb->ssthresh < (unsigned long) pcb->mss) pcb->ssthresh = pcb->mss * 2;
+        if (pcb->ssthresh < (unsigned long) pcb->mss) 
+			pcb->ssthresh = pcb->mss * 2;
+	//重置为1个mss
         pcb->cwnd = pcb->mss;
 
         kprintf("tcp_rexmit_seg: cwnd %u ssthresh %u\n", pcb->cwnd, pcb->ssthresh);
@@ -523,6 +532,7 @@ void tcp_slow_handler(void *arg)
 // Is called every 100 ms and sends delayed ACKs
 //
 
+//发送延迟的ack
 void tcp_fasttmr(void *arg)
 {
   struct tcp_pcb *pcb;
@@ -795,6 +805,7 @@ void tcp_pcb_remove(struct tcp_pcb **pcblist, struct tcp_pcb *pcb)
 {
   TCP_RMV(pcblist, pcb);
 
+//清理所有未发送、未ack的、乱序的段
   tcp_pcb_purge(pcb);
   
   // If there is an outstanding delayed ACKs, send it

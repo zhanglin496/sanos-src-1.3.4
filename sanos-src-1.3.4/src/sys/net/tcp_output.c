@@ -337,7 +337,8 @@ err_t tcp_output(struct tcp_pcb *pcb)
 {
   struct tcp_seg *seg, *useg;
   unsigned long wnd;
-    
+
+	//可发送窗口
   wnd = MIN(pcb->snd_wnd, pcb->cwnd);
   seg = pcb->unsent;
   //kprintf("tcp_output: wnd %d snd_wnd %d cwnd %d\n", wnd, pcb->snd_wnd, pcb->cwnd);
@@ -528,10 +529,13 @@ void tcp_rexmit(struct tcp_pcb *pcb)
   // Move all unacked segments to the unsent queue
   for (seg = pcb->unacked; seg->next != NULL; seg = seg->next);
 
+//unack移动到unsent 链表头
+//这里的实现是重传所用未ack的数据段
   seg->next = pcb->unsent;
   pcb->unsent = pcb->unacked;
   pcb->unacked = NULL;
 
+//重置下次待发送数据的序列号
   pcb->snd_nxt = ntohl(pcb->unsent->tcphdr->seqno);
 
   pcb->nrtx++;
