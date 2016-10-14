@@ -327,6 +327,7 @@ extern struct tcp_pcb *tcp_tw_pcbs;             // List of all TCP PCBs in TIME-
 // Define two macros, TCP_REG and TCP_RMV that registers a TCP PCB
 // with a PCB list or removes a PCB from a list, respectively.
 
+//²åÈëÁ´±íÍ·
 #define TCP_REG(pcbs, npcb) do { \
                             npcb->next = *pcbs; \
                             *pcbs = npcb; \

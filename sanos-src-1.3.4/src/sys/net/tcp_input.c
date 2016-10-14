@@ -160,7 +160,7 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
     {
       for (pcb = (struct tcp_pcb *) tcp_listen_pcbs; pcb != NULL; pcb = pcb->next) 
       {
-      	//目的端口必须相等
+      	//目的端口必须相等，这里没有实现精确匹配
         if ((ip_addr_isany(&pcb->local_ip) || ip_addr_cmp(&pcb->local_ip, &iphdr->dest)) &&
              pcb->local_port == tcphdr->dest) 
         {

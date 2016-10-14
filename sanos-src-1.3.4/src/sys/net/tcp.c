@@ -235,11 +235,15 @@ err_t tcp_bind(struct tcp_pcb *pcb, struct ip_addr *ipaddr, unsigned short port)
   struct tcp_pcb *cpcb;
 
   // Assign new port if port number is zero
-  if (port == 0) port = tcp_new_port();
+  if (port == 0) 
+  	port = tcp_new_port();
 
   // Check if the address already is in use
   for (cpcb = (struct tcp_pcb *) tcp_listen_pcbs; cpcb != NULL; cpcb = cpcb->next) 
   {
+  //这里的实现是不允许
+  //A:192.168.0.1:80 和B:*:80 同时存在
+  //在端口号相等的情况下，不允许通配IP和精确IP同时出现
     if (cpcb->local_port == port)
     {
       if (ip_addr_isany(&cpcb->local_ip) ||
@@ -248,6 +252,15 @@ err_t tcp_bind(struct tcp_pcb *pcb, struct ip_addr *ipaddr, unsigned short port)
       {
         return -EADDRINUSE;
       }
+
+	 /* 可以改成允许通配同时存在
+	 if ((ip_addr_isany(&cpcb->local_ip) && 
+		 ip_addr_isany(ipaddr)) ||
+		 ip_addr_cmp(&cpcb->local_ip, ipaddr)) 
+	 {
+	   return -EADDRINUSE;
+	 }
+	 */
     }
   }
 
@@ -263,7 +276,7 @@ err_t tcp_bind(struct tcp_pcb *pcb, struct ip_addr *ipaddr, unsigned short port)
       }
     }
   }
-
+	//检查本机是否存在指定的IP
   if (!ip_addr_isany(ipaddr)) 
   {
     if (!ip_ownaddr(ipaddr)) return -EADDRNOTAVAIL;
@@ -287,7 +300,8 @@ err_t tcp_bind(struct tcp_pcb *pcb, struct ip_addr *ipaddr, unsigned short port)
 
 struct tcp_pcb *tcp_listen(struct tcp_pcb *pcb)
 {
-  if (pcb->state == LISTEN) return pcb;
+  if (pcb->state == LISTEN) 
+  	return pcb;
   pcb->state = LISTEN;
   TCP_REG((struct tcp_pcb **) &tcp_listen_pcbs, pcb);
   return pcb;
