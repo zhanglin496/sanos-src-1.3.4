@@ -263,7 +263,7 @@ err_t tcp_bind(struct tcp_pcb *pcb, struct ip_addr *ipaddr, unsigned short port)
 	 */
     }
   }
-
+	//检查活动的pcb
   for (cpcb = tcp_active_pcbs; cpcb != NULL; cpcb = cpcb->next) 
   {
     if (cpcb->local_port == port)
