@@ -427,6 +427,9 @@ void tcp_slowtmr(void *arg)
         // Reduce congestion window and ssthresh
         eff_wnd = MIN(pcb->cwnd, pcb->snd_wnd);\
         //慢启动阀值减半
+        //减小慢启动阀值，这样可以快速进入拥塞避免状态
+        //这样当拥塞窗口超过慢启动阀值时，
+        //采用的增窗方式将会和慢启动不一样
         pcb->ssthresh = eff_wnd >> 1;
         if (pcb->ssthresh < (unsigned long) pcb->mss) 
 			pcb->ssthresh = pcb->mss * 2;
