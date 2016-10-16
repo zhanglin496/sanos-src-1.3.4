@@ -1,0 +1,261 @@
+/* Hash Tables Implementation.
+ *
+ * This file implements in-memory hash tables with insert/del/replace/find/
+ * get-random-element operations. Hash tables will auto-resize if needed
+ * tables of power of two in size are used, collisions are handled by
+ * chaining. See the source code for more information... :)
+ *
+ * Copyright (c) 2006-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *   * Redistributions of source code must retain the above copyright notice,
+ *     this list of conditions and the following disclaimer.
+ *   * Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in the
+ *     documentation and/or other materials provided with the distribution.
+ *   * Neither the name of Redis nor the names of its contributors may be used
+ *     to endorse or promote products derived from this software without
+ *     specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#ifndef __KERNEL__
+#include <stdint.h>
+#else
+#include <linux/stdint.h>
+#endif
+
+#ifndef __DICT_H
+#define __DICT_H
+
+#define DICT_OK 0
+#define DICT_ERR -1
+
+struct url_cache_item {
+	atomic_t ref;
+	struct list_head list;
+	spinlock_t lock;
+	struct url_cache_key key;
+	struct timer_list age_timer;
+	struct rcu_head url_rcu;
+	struct dictEntry *entry;
+	/* redirect url, must be NUL terminated	*/
+	u16 len;
+	char data[0];
+};
+
+void val_url_free(void *privdata, void *obj)
+{
+	struct url_cache_item *item;
+	
+	dictentry_delete(item->entry);
+	if (del_timer(&item->age_timer))
+	
+	url_cache_put(item);
+}
+
+void dictentry_free_rcu(struct rcu_head *rcu)
+{
+	dictentry *entry = container_of(rcu, dictentry, d_rcu);
+	kfree(entry);
+}
+
+void dictentry_free(dictentry *entry)
+{
+	dictfreekey(entry->d, entry);
+	dictfreeval(entry->d, entry);
+	call_rcu(&entry->d_rcu, dictentry_free_rcu);
+}
+
+void dictentry_put(dictentry *entry)
+{
+	if (entry && atomic_dec_and_test(&entry->ref))
+		dictentry_free(entry);
+}
+
+void dictentry_get(dictentry *entry)
+{
+	if (entry)
+		atomic_inc(&entry->ref);
+}
+
+void dictentry_kill(dictentry *entry)
+{
+	spin_lock_bh(entry->lock);
+	hlist_del_init_rcu(entry->hnode);
+	spin_unlock_bh(entry->unlock);
+
+	dictentry_put(entry);
+}
+
+static inline bool dictentry_is_expired(dictentry *dict)
+{
+	return !!time_after(jiffies, dict->timeout);
+}
+
+/* Unused arguments generate annoying warnings... */
+#define DICT_NOTUSED(V) ((void) V)
+struct dict;
+typedef struct dictentry {
+	void *key;
+	union {
+		void *val;
+		uint64_t u64;
+		int64_t s64;
+		double d;
+	} v;
+	atomic_t ref;
+	unsigned long timeout;
+	struct rcu_head d_rcu;
+	struct hlist_node hnode;
+} dictentry;
+
+typedef struct dicttype {
+	u32 dict_limit;	/* hash item limit, 0 means no limit */
+	u32 dict_size;	/* hashtable size, 0 means default DICT_HT_INITIAL_SIZE */
+	unsigned int (*hashfunction)(const void *key);
+	void *(*keydup)(void *privdata, const void *key);
+	void *(*valdup)(void *privdata, const void *obj);
+	int (*keycompare)(void *privdata, const void *key1, const void *key2);
+	void (*keydestructor)(void *privdata, void *key);
+	void (*valdestructor)(void *privdata, void *obj);
+//	int (*ref_get)(void *privdata, void *obj);
+//	int (*ref_put)(void *privdata, void *obj);
+	int (*dict_upperlimit)(void *privdata, struct dict *d);
+} dicttype;
+
+/* This is our hash table structure. Every dictionary has two of this as we
+ * implement incremental rehashing, for the old to the new table. */
+typedef struct dictht {
+	struct hlist_head *table;
+//	atomic_t size;
+//	atomic_t sizemask;
+//	atomic_t used;
+	unsigned long size;
+	unsigned long sizemask;
+	unsigned long used;
+} dictht;
+
+struct dictentry_gc_work {
+	struct delayed_work dwork;
+	dict	*d;
+	u32	last_bucket;
+	bool	exiting;
+};
+
+typedef struct dict {
+	dicttype *type;
+	void *privdata;
+	spinlock_t lock;
+	dictht ht[1];
+	long rehashidx; /* rehashing not in progress if rehashidx == -1 */
+	int iterators; /* number of iterators currently running */
+	/* gc worker for cleanup timout entry */
+	struct dictentry_gc_work dictentry_gc_work;
+} dict;
+
+/* This is the initial size of every hash table */
+#define DICT_HT_INITIAL_SIZE	 128
+
+/* ------------------------------- Macros ------------------------------------*/
+#define dictfreeval(d, entry) \
+	if ((d)->type->valdestructor) \
+		(d)->type->valdestructor((d)->privdata, (entry)->v.val)
+
+#define dictsetval(d, entry, _val_) do { \
+	if ((d)->type->valdup) \
+		rcu_assign_pointer(entry->v.val, (d)->type->valdup((d)->privdata, _val_)); \
+//		entry->v.val = (d)->type->valDup((d)->privdata, _val_); \
+	else \
+		rcu_assign_pointer(entry->v.val, _val_); \
+//		entry->v.val = (_val_); \
+} while(0)
+
+#define dictsetsignedintegerVal(entry, _val_) \
+	do { entry->v.s64 = _val_; } while(0)
+
+#define dictsetunsignedintegerVal(entry, _val_) \
+	do { entry->v.u64 = _val_; } while(0)
+
+#define dictsetdoubleval(entry, _val_) \
+	do { entry->v.d = _val_; } while(0)
+
+#define dictfreekey(d, entry) \
+	if ((d)->type->keydestructor) \
+		(d)->type->keydestructor((d)->privdata, (entry)->key)
+
+#define dictsetkey(d, entry, _key_) do { \
+	if ((d)->type->keydup) \
+		rcu_assign_pointer(entry->key, (d)->type->keydup((d)->privdata, _key_));\
+//		entry->key = (d)->type->keyDup((d)->privdata, _key_); \
+	else \
+		rcu_assign_pointer(entry->key, _key_);\
+//		entry->key = (_key_); \
+} while(0)
+
+#define dictcomparekeys(d, key1, key2) \
+	(((d)->type->keycompare) ? \
+		(d)->type->keycompare((d)->privdata, key1, key2) : \
+		(key1) == (key2))
+
+#define dicthashkey(d, key) (d)->type->hashfunction(key)
+#define dictgetkey(he) (rcu_dereference((he)->key))
+#define dictgetval(he) (rcu_dereference((he)->v.val))
+#define dictgetsignedintegerval(he) ((he)->v.s64)
+#define dictgetunsignedintegerval(he) ((he)->v.u64)
+#define dictgetdoubleval(he) ((he)->v.d)
+#define dictslots(d) ((d)->ht[0].size+(d)->ht[1].size)
+#define dictsize(d) ((d)->ht[0].used+(d)->ht[1].used)
+#define dictisrehashing(d) ((d)->rehashidx != -1)
+
+/* API */
+dict *dictcreate(dictType *type, void *privDataPtr);
+int dictExpand(dict *d, unsigned long size);
+int dictadd(dict *d, void *key, void *val);
+dictEntry *dictAddRaw(dict *d, void *key);
+int dictReplace(dict *d, void *key, void *val);
+dictEntry *dictReplaceRaw(dict *d, void *key);
+int dictDelete(dict *d, const void *key);
+int dictDeleteNoFree(dict *d, const void *key);
+void dictRelease(dict *d);
+dictEntry * dictFind(dict *d, const void *key);
+void *dictFetchValue(dict *d, const void *key);
+int dictResize(dict *d);
+dictIterator *dictGetIterator(dict *d);
+dictIterator *dictGetSafeIterator(dict *d);
+dictEntry *dictNext(dictIterator *iter);
+void dictReleaseIterator(dictIterator *iter);
+dictEntry *dictGetRandomKey(dict *d);
+unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count);
+void dictPrintStats(dict *d);
+unsigned int dictGenHashFunction(const void *key, int len);
+unsigned int dictGenCaseHashFunction(const unsigned char *buf, int len);
+void dictEmpty(dict *d, void(callback)(void*));
+void dictEnableResize(void);
+void dictDisableResize(void);
+int dictRehash(dict *d, int n);
+int dictRehashMilliseconds(dict *d, int ms);
+void dictSetHashFunctionSeed(unsigned int initval);
+unsigned int dictGetHashFunctionSeed(void);
+unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, void *privdata);
+
+/* Hash table types */
+extern dictType dictTypeHeapStringCopyKey;
+extern dictType dictTypeHeapStrings;
+extern dictType dictTypeHeapStringCopyKeyValue;
+
+#endif /* __DICT_H */
