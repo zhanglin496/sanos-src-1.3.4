@@ -322,8 +322,10 @@ static dictentry *dictentry_find(dict *d, const void *key)
 	hlist_for_each_entry_rcu(he, n, table[idx], hnode) {
 		if (dictcomparekeys(d, key, he->key)) {
 			if (dictentry_is_expired(he)) {
-				if (atomic_inc_not_zero(&he->ref))
+				if (atomic_inc_not_zero(&he->ref)) {
 					dictentry_kill(he);
+					dictentry_put(he);
+				}
 				continue;
 			}
 			return he;
