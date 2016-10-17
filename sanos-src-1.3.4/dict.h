@@ -188,12 +188,12 @@ static inline void dictentry_get(dictentry *entry)
 		atomic_inc(&entry->ref);
 }
 
-static inline bool dictentry_is_expired(dictentry *dict)
+static inline int dictentry_is_expired(dictentry *dict)
 {
 	return !!time_after(jiffies, dict->timeout);
 }
 
-static inline bool dictentry_is_dying(dictentry *dict)
+static inline int dictentry_is_dying(dictentry *dict)
 {
 	return test_bit(DICTENTRY_DYING_BIT, &dict->flags);
 }
