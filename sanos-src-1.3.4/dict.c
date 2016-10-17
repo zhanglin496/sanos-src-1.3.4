@@ -161,7 +161,7 @@ static void dict_gc_worker(struct work_struct *work)
 	if (gc_work->exiting)
 		return;
 
-	//超时的比例超过90%
+	/* if expired item more than 90% call worker now  */
 	ratio = scanned ? expired_count * 100 / scanned : 0;
 	if (ratio >= 90)
 		next_run = 0;
