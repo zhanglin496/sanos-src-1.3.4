@@ -121,13 +121,14 @@ static void dict_gc_worker(struct work_struct *work)
 	unsigned int ratio, scanned = 0;
 	struct dictentry_gc_work *gc_work;
 	struct hlist_head **hash;
+	struct dict *d;
 	unsigned int hashsz;
 
 	gc_work = container_of(work, struct dictentry_gc_work, dwork.work);
-
+	d = gc_work->d;
 	i = gc_work->next_bucket;
-	hash = gc_work->d->ht[0].table;
-	hashsz = gc_work->d->ht[0].size;
+	hash = d->ht[0].table;
+	hashsz = d->ht[0].size;
 	goal = min(hashsz / DICT_GC_MAX_BUCKETS_DIV, DICT_GC_MAX_BUCKETS);
 	
 	do {
@@ -143,6 +144,7 @@ static void dict_gc_worker(struct work_struct *work)
 			if (dictentry_is_expired(entry) && atomic_inc_not_zero(&entry->ref)) {
 				dictentry_kill(entry);
 				dictentry_put(entry);
+				atomic_dec(&d->ht[0].used);
 				expired_count++;
 				continue;
 			}
@@ -325,6 +327,7 @@ static dictentry *dictentry_find(dict *d, const void *key)
 				if (atomic_inc_not_zero(&he->ref)) {
 					dictentry_kill(he);
 					dictentry_put(he);
+					atomic_dec(&d->ht[0].used);
 				}
 				continue;
 			}
