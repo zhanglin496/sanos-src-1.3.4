@@ -82,8 +82,6 @@ typedef struct dicttype {
 	int (*keycompare)(void *privdata, const void *key1, const void *key2);
 	void (*keydestructor)(void *privdata, void *key);
 	void (*valdestructor)(void *privdata, void *obj);
-//	int (*ref_get)(void *privdata, void *obj);
-//	int (*ref_put)(void *privdata, void *obj);
 	int (*dict_upperlimit)(void *privdata, struct dict *d);
 } dicttype;
 
@@ -131,10 +129,10 @@ typedef struct dict {
 	} \
 } while(0);}), _ret_)
 
-#define dictsetsignedintegerVal(entry, _val_) \
+#define dictsetsignedintegerval(entry, _val_) \
 	do { entry->v.s64 = _val_; } while(0)
 
-#define dictsetunsignedintegerVal(entry, _val_) \
+#define dictsetunsignedintegerval(entry, _val_) \
 	do { entry->v.u64 = _val_; } while(0)
 
 #define dictsetdoubleval(entry, _val_) \
