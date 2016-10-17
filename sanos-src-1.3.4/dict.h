@@ -193,6 +193,11 @@ static inline bool dictentry_is_expired(dictentry *dict)
 	return !!time_after(jiffies, dict->timeout);
 }
 
+static inline bool dictentry_is_dying(dictentry *dict)
+{
+	return test_bit(DICTENTRY_DYING_BIT, &dict->flags);
+}
+
 /* Hash table types */
 //extern dictType dictTypeHeapStringCopyKey;
 //extern dictType dictTypeHeapStrings;

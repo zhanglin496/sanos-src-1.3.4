@@ -141,7 +141,8 @@ static void dict_gc_worker(struct work_struct *work)
 
 		hlist_for_each_entry_rcu(entry, n, hash[i], hnode) {
 			scanned++;
-			if (dictentry_is_expired(entry) && atomic_inc_not_zero(&entry->ref)) {
+			if (dictentry_is_expired(entry) && !dictentry_is_dying(entry) &&
+				atomic_inc_not_zero(&entry->ref)) {
 				dictentry_kill(entry);
 				dictentry_put(entry);
 				atomic_dec(&d->ht[0].used);
@@ -322,17 +323,16 @@ static dictentry *dictentry_find(dict *d, const void *key)
 	h = dicthashkey(d, key);
 	idx = h & d->ht[0].sizemask;
 	hlist_for_each_entry_rcu(he, n, table[idx], hnode) {
-		if (dictcomparekeys(d, key, he->key)) {
-			if (dictentry_is_expired(he)) {
-				if (atomic_inc_not_zero(&he->ref)) {
-					dictentry_kill(he);
-					dictentry_put(he);
-					atomic_dec(&d->ht[0].used);
-				}
-				continue;
+		if (dictentry_is_expired(he)) {
+			if (!dictentry_is_dying(he) && atomic_inc_not_zero(&he->ref)) {
+				dictentry_kill(he);
+				dictentry_put(he);
+				atomic_dec(&d->ht[0].used);
 			}
-			return he;
+			continue;
 		}
+		if (dictcomparekeys(d, key, he->key)) 
+			return he;
 	}
 	
 	return NULL;
