@@ -54,6 +54,8 @@
 #include <linux/random.h>
 #include <linux/ctype.h>
 #include <linux/slab.h>
+#include <linux/list.h>
+#include <linux/rculist.h>
 #define zcalloc(x) kzalloc(x, GFP_ATOMIC)
 #define zmalloc(x) kmalloc(x, GFP_ATOMIC)
 #define zfree(x) kfree(x)
@@ -64,6 +66,12 @@
 
 #include "dict.h"
 
+
+#define DICT_GC_MAX_BUCKETS_DIV	64u
+#define DICT_GC_MAX_BUCKETS		8192u
+#define DICT_GC_INTERVAL		(5 * HZ)
+#define DICT_GC_MAX_EVICTS		256u
+
 /* Using dictEnableResize() / dictDisableResize() we make possible to
  * enable/disable resizing of the hash table as needed. This is very important
  * for Redis, as we use copy-on-write and don't want to move too much memory
@@ -73,56 +81,142 @@
  * prevented: a hash table is still allowed to grow if the ratio between
  * the number of elements and the buckets > dict_force_resize_ratio. */
 
-//static int dict_can_resize = 1;
-//static unsigned int dict_force_resize_ratio = 5;
-
 /* -------------------------- private prototypes ---------------------------- */
 
-static int _dictExpandIfNeeded(dict * ht);
-static unsigned long _dictNextPower(unsigned long size);
-static int _dictKeyIndex(dict * ht, const void *key);
-static int _dictInit(dict * ht, dictType * type, void *privDataPtr);
+static int _dictinit(dict *ht, dicttype * type, void *privdataptr);
+static dictentry *dictentry_find(dict *d, const void *key);
 
 /* ----------------------------- API implementation ------------------------- */
 
+static void dictentry_free_rcu(struct rcu_head *rcu)
+{
+	dictentry *entry = container_of(rcu, dictentry, d_rcu);
+	kfree(entry);
+}
+
+void dictentry_free(dictentry *entry)
+{
+	dictfreekey(entry->d, entry);
+	dictfreeval(entry->d, entry);
+	call_rcu(&entry->d_rcu, dictentry_free_rcu);
+}
+
+
+void dictentry_kill(dictentry *entry)
+{
+	if (test_and_set_bit(DICTENTRY_DYING_BIT, &entry->flags))
+		return;
+	
+	spin_lock_bh(&entry->d->lock);
+	hlist_del_init_rcu(&entry->hnode);
+	spin_unlock_bh(&entry->d->lock);
+
+	dictentry_put(entry);
+}
+
+static void dict_gc_worker(struct work_struct *work)
+{
+	unsigned int i, goal, buckets = 0, expired_count = 0;
+	unsigned long next_run = DICT_GC_INTERVAL;
+	unsigned int ratio, scanned = 0;
+	struct dictentry_gc_work *gc_work;
+	struct hlist_head **hash;
+	unsigned int hashsz;
+
+	gc_work = container_of(work, struct dictentry_gc_work, dwork.work);
+
+	i = gc_work->next_bucket;
+	hash = gc_work->d->ht[0].table;
+	hashsz = gc_work->d->ht[0].size;
+	goal = min(hashsz / DICT_GC_MAX_BUCKETS_DIV, DICT_GC_MAX_BUCKETS);
+	
+	do {
+		struct dictentry *entry;
+		struct hlist_node *n;
+
+		rcu_read_lock();
+		if (i >= hashsz)
+			i = 0;
+
+		hlist_for_each_entry_rcu(entry, n, hash[i], hnode) {
+			scanned++;
+			if (dictentry_is_expired(entry) && atomic_inc_not_zero(&entry->ref)) {
+				dictentry_kill(entry);
+				dictentry_put(entry);
+				expired_count++;
+				continue;
+			}
+		}
+		i++;
+
+		/* could check get_nulls_value() here and restart if ct
+		 * was moved to another chain.  But given gc is best-effort
+		 * we will just continue with next hash slot.
+		 */
+		rcu_read_unlock();
+//		cond_resched_rcu_qs();
+	} while (++buckets < goal &&
+		 expired_count < DICT_GC_MAX_EVICTS);
+
+	if (gc_work->exiting)
+		return;
+
+	//超时的比例超过90%
+	ratio = scanned ? expired_count * 100 / scanned : 0;
+	if (ratio >= 90)
+		next_run = 0;
+
+	gc_work->next_bucket = i;
+	schedule_delayed_work(&gc_work->dwork, next_run);
+}
+
 /* Reset a hash table already initialized with ht_init().
  * NOTE: This function should only be called by ht_destroy(). */
-static void _dictreset(dictht * ht)
+static void _dictreset(dictht *ht)
 {
 	ht->table = NULL;
 	ht->size = 0;
 	ht->sizemask = 0;
-	ht->used = 0;
+	atomic_set(&ht->used, 0);
 }
 
 /* Create a new hash table */
-dict *dictcreate(dictType * type, void *privDataPtr)
+dict *dictcreate(dicttype *type, void *privdataptr)
 {
 	dict *d = zmalloc(sizeof(*d));
 	if (!d)
 		return NULL;
 	
-	_dictinit(d, type, privDataPtr);
+	if (_dictinit(d, type, privdataptr) != DICT_OK) {
+		zfree(d);
+		return NULL;
+	}
 	return d;
 }
 
 /* Initialize the hash table */
-static int _dictinit(dict * d, dictType * type, void *privdataptr)
-{
-	d->dictentry_gc_work.d = d;
+static int _dictinit(dict *d, dicttype *type, void *privdataptr)
+{	
 	INIT_DELAYED_WORK(&d->dictentry_gc_work.dwork, dict_gc_worker);
-	_dictreset(&d->ht[0]);
+	d->dictentry_gc_work.d = d;
+	d->ht[0].size = type->dict_size ? type->dict_size : DICT_HT_INITIAL_SIZE;
+	d->ht[0].sizemask = d->ht[0].size - 1;
+	d->ht[0].table = (struct hlist_head **)zmalloc(d->ht[0].size * sizeof(struct hlist_head *));
+	
+	if (!d->ht[0].table)
+		return DICT_ERR;
+	
+	atomic_set(&d->ht[0].used, 0);
 	d->type = type;
 	d->privdata = privdataptr;
-	d->rehashidx = -1;
-	d->iterators = 0;
 	return DICT_OK;
 }
 
 /* Add an element to the target hash table */
-int dictadd(dict * d, void *key, void *val, unsigned long timeout)
+int dictadd(dict *d, void *key, void *val, unsigned long timeout, int init_ref)
 {
 	unsigned int idx;
+	int ret;
 	dictentry *entry;
 	
 	rcu_read_lock();
@@ -130,221 +224,102 @@ int dictadd(dict * d, void *key, void *val, unsigned long timeout)
 	rcu_read_unlock();
 	
 	if (entry)
-			return DICT_ERR;
+		return DICT_ERR;
 	
 	spin_lock_bh(&d->lock);
 	entry = dictentry_find_get(d, key);
 	if (entry) {
+		spin_unlock_bh(&d->lock);
 		dictentry_put(entry);
-		goto err_out;
+		return DICT_ERR;
 	}
 	
 	entry = zmalloc(sizeof(*entry));
 	if (!entry)
 		goto err_out;
 	
-//	entry->d = d;
+	entry->flags = 0UL;
 	entry->timeout = timeout + jiffies;
+	entry->d = d;
 	idx = dicthashkey(d, key) & d->ht[0].sizemask;
-	dictsetkey(d, entry, key);
-	dictsetval(d, entry, val);
+	ret = dictsetkey(d, entry, key, ret);
+	if (ret != DICT_OK)
+		goto err_out;
 	
-	atomic_set(&entry->ref, 1);
-	hlist_add_head_rcu(&entry->hnode, &d->ht[0].table[idx]);
+	ret = dictsetval(d, entry, val, ret);
+	if (ret != DICT_OK) {
+		dictfreekey(d, entry);
+		goto err_out;
+	}
+	
+	atomic_set(&entry->ref, init_ref);
+	hlist_add_head_rcu(&entry->hnode, d->ht[0].table[idx]);
+	atomic_inc(&d->ht[0].used);
 	spin_unlock_bh(&d->lock);
 
 	return DICT_OK;
 	
 err_out:
+	if (entry)
+		zfree(entry);
 	spin_unlock_bh(&d->lock);
 	return DICT_ERR;
 }
 
-/* Low level add. This function adds the entry but instead of setting
- * a value returns the dictEntry structure to the user, that will make
- * sure to fill the value field as he wishes.
- *
- * This function is also directly exposed to the user API to be called
- * mainly in order to store non-pointers inside the hash value, example:
- *
- * entry = dictAddRaw(dict,mykey);
- * if (entry != NULL) dictSetSignedIntegerVal(entry,1000);
- *
- * Return values:
- *
- * If key already exists NULL is returned.
- * If key was added, the hash entry is returned to be manipulated by the caller.
- */
-dictEntry *dictAddRaw(dict * d, void *key)
-{
-	int index;
-	dictEntry *entry;
-	dictht *ht;
-
-	if (dictIsRehashing(d))
-		_dictRehashStep(d);
-
-	/* Get the index of the new element, or -1 if
-	 * the element already exists. */
-	if ((index = _dictKeyIndex(d, key)) == -1)
-		return NULL;
-
-	/* Allocate the memory and store the new entry */
-	ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
-	entry = zmalloc(sizeof(*entry));
-	if (!entry)
-		return NULL;
-	entry->next = ht->table[index];
-	ht->table[index] = entry;
-	ht->used++;
-
-	/* Set the hash entry fields. */
-	dictSetKey(d, entry, key);
-	return entry;
-}
-
-/* Add an element, discarding the old if the key already exists.
- * Return 1 if the key was added from scratch, 0 if there was already an
- * element with such key and dictReplace() just performed a value update
- * operation. */
-int dictReplace(dict * d, void *key, void *val)
-{
-	dictEntry *entry, auxentry;
-
-	/* Try to add the element. If the key
-	 * does not exists dictAdd will suceed. */
-	if (dictAdd(d, key, val) == DICT_OK)
-		return 1;
-	/* It already exists, get the entry */
-	entry = dictFind(d, key);
-	/* Set the new value and free the old one. Note that it is important
-	 * to do that in this order, as the value may just be exactly the same
-	 * as the previous one. In this context, think to reference counting,
-	 * you want to increment (set), and then decrement (free), and not the
-	 * reverse. */
-	auxentry = *entry;
-	dictSetVal(d, entry, val);
-	dictFreeVal(d, &auxentry);
-	return 0;
-}
-
-/* dictReplaceRaw() is simply a version of dictAddRaw() that always
- * returns the hash entry of the specified key, even if the key already
- * exists and can't be added (in that case the entry of the already
- * existing key is returned.)
- *
- * See dictAddRaw() for more information. */
-dictEntry *dictReplaceRaw(dict * d, void *key)
-{
-	dictEntry *entry = dictFind(d, key);
-
-	return entry ? entry : dictAddRaw(d, key);
-}
-
-/* Search and remove an element */
-static int dictGenericDelete(dict * d, const void *key, int nofree)
-{
-	unsigned int h, idx;
-	dictEntry *he, *prevHe;
-	int table;
-
-	if (d->ht[0].size == 0)
-		return DICT_ERR;	/* d->ht[0].table is NULL */
-	if (dictIsRehashing(d))
-		_dictRehashStep(d);
-	h = dictHashKey(d, key);
-
-	for (table = 0; table <= 1; table++) {
-		idx = h & d->ht[table].sizemask;
-		he = d->ht[table].table[idx];
-		prevHe = NULL;
-		while (he) {
-			if (dictCompareKeys(d, key, he->key)) {
-				/* Unlink the element from the list */
-				if (prevHe)
-					prevHe->next = he->next;
-				else
-					d->ht[table].table[idx] = he->next;
-				if (!nofree) {
-					dictFreeKey(d, he);
-					dictFreeVal(d, he);
-				}
-				zfree(he);
-				d->ht[table].used--;
-				return DICT_OK;
-			}
-			prevHe = he;
-			he = he->next;
-		}
-		if (!dictIsRehashing(d))
-			break;
-	}
-	return DICT_ERR;		/* not found */
-}
-
-int dictDelete(dict * ht, const void *key)
-{
-	return dictGenericDelete(ht, key, 0);
-}
-
-int dictDeleteNoFree(dict * ht, const void *key)
-{
-	return dictGenericDelete(ht, key, 1);
-}
-
 /* Destroy an entire dictionary */
-int _dictclear(dict * d, dictht * ht, void (callback) (void *))
+static int _dictclear(dict *d, dictht *ht, void (callback) (void *))
 {
 	unsigned long i;
+	struct hlist_head **hash;
+	unsigned int hashsz;
+	struct dictentry *entry;
+	struct hlist_node *n, *pos;
 
-	/* Free all the elements */
-	for (i = 0; i < ht->size && ht->used > 0; i++) {
-		dictEntry *he, *nextHe;
+	hash = d->ht[0].table;
+	hashsz = d->ht[0].size;
 
-		if (callback && (i & 65535) == 0)
-			callback(d->privdata);
-
-		if ((he = ht->table[i]) == NULL)
-			continue;
-		while (he) {
-			nextHe = he->next;
-			dictFreeKey(d, he);
-			dictFreeVal(d, he);
-			zfree(he);
-			ht->used--;
-			he = nextHe;
+	spin_lock_bh(&d->lock);
+	for (i = 0; i < hashsz; i++) {
+		hlist_for_each_entry_safe(entry, pos, n, hash[i], hnode) {
+			dictentry_get(entry);
+			dictentry_kill(entry);
+			dictentry_put(entry);
+			atomic_dec(&d->ht[0].used);
 		}
 	}
-	/* Free the table and the allocated cache structure */
+	spin_unlock_bh(&d->lock);
+
 	zfree(ht->table);
 	/* Re-initialize the table */
 	_dictreset(ht);
-	return DICT_OK;		/* never fails */
+	return DICT_OK; 	/* never fails */
 }
 
 /* Clear & Release the hash table */
-void dictrelease(dict * d)
+void dictrelease(dict *d)
 {
+	d->dictentry_gc_work.exiting = true;
 	cancel_delayed_work_sync(&d->dictentry_gc_work.dwork);
 	_dictclear(d, &d->ht[0], NULL);
 	zfree(d);
+	rcu_barrier();
 }
 
 /* must be hold rcu_read_lock */
-static dictentry *dictentry_find(dict * d, const void *key)
+static dictentry *dictentry_find(dict *d, const void *key)
 {
 	dictentry *he;
 	struct hlist_node *n;
-	struct hlist_head *table;
-	unsigned int h, idx, table;
+	struct hlist_head **table;
+	unsigned int h, idx;
 
 	if (d->ht[0].size == 0)
 		return NULL;		/* We don't have a table at all */
 	
-	table = rcu_dereference(d->ht[0].table)
+	table = d->ht[0].table;
 	h = dicthashkey(d, key);
 	idx = h & d->ht[0].sizemask;
-	hlist_for_each_entry_rcu(he, n, &table[idx], hnode) {
+	hlist_for_each_entry_rcu(he, n, table[idx], hnode) {
 		if (dictcomparekeys(d, key, he->key)) {
 			if (dictentry_is_expired(he)) {
 				if (atomic_inc_not_zero(&he->ref))
@@ -358,7 +333,7 @@ static dictentry *dictentry_find(dict * d, const void *key)
 	return NULL;
 }
 
-dictentry *dictentry_find_get(dict * d, const void *key)
+dictentry *dictentry_find_get(dict *d, const void *key)
 {
 	dictentry *he;
 	
@@ -378,12 +353,10 @@ void *dictentry_value(dictentry *he)
 void dictempty(dict * d, void (callback) (void *))
 {
 	_dictclear(d, &d->ht[0], callback);
-//	_dictclear(d, &d->ht[1], callback);
-	d->rehashidx = -1;
-	d->iterators = 0;
+	rcu_barrier();
 }
 
-#if 1
+#if 0
 
 /* ----------------------- StringCopy Hash Table Type ------------------------*/
 
@@ -419,7 +392,7 @@ static void _dictStringDestructor(void *privdata, void *key)
 	zfree(key);
 }
 
-dictType dictTypeHeapStringCopyKey = {
+dicttype dictTypeHeapStringCopyKey = {
 	_dictStringCopyHTHashFunction,	/* hash function */
 	_dictStringDup,		/* key dup */
 	NULL,			/* val dup */
@@ -430,7 +403,7 @@ dictType dictTypeHeapStringCopyKey = {
 
 /* This is like StringCopy but does not auto-duplicate the key.
  * It's used for intepreter's shared strings. */
-dictType dictTypeHeapStrings = {
+dicttype dictTypeHeapStrings = {
 	_dictStringCopyHTHashFunction,	/* hash function */
 	NULL,			/* key dup */
 	NULL,			/* val dup */
@@ -441,7 +414,7 @@ dictType dictTypeHeapStrings = {
 
 /* This is like StringCopy but also automatically handle dynamic
  * allocated C strings as values. */
-dictType dictTypeHeapStringCopyKeyValue = {
+dicttype dictTypeHeapStringCopyKeyValue = {
 	_dictStringCopyHTHashFunction,	/* hash function */
 	_dictStringDup,		/* key dup */
 	_dictStringDup,		/* val dup */
@@ -453,15 +426,15 @@ dictType dictTypeHeapStringCopyKeyValue = {
 int main(int argc, char **argv)
 {
 	int err;
-	dict *d = dictCreate(&dictTypeHeapStringCopyKeyValue, NULL);
-	err = dictAdd(d, "1231", "456");
+	dict *d = dictcreate(&dictTypeHeapStringCopyKeyValue, NULL);
+	err = dictadd(d, "1231", "456");
 	printf("err=%d\n", err);
-	err = dictAdd(d, "1231", "456");
+	err = dictadd(d, "1231", "456");
 	printf("err=%d\n", err);
-	printf("%s\n", dictFetchValue(d, "1231"));
+	printf("%s\n", dictentry_value(d, "1231"));
 //	dictRelease(d);
-	dictPrintStats(d);
-	dictRelease(d);
+//	dictPrintStats(d);
+	dictrelease(d);
 	return 0;
 }
 
