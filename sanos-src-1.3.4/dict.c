@@ -91,7 +91,7 @@ static dictentry *dictentry_find(dict *d, const void *key);
 static void dictentry_free_rcu(struct rcu_head *rcu)
 {
 	dictentry *entry = container_of(rcu, dictentry, d_rcu);
-	kfree(entry);
+	zfree(entry);
 }
 
 void dictentry_free(dictentry *entry)
