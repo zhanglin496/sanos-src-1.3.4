@@ -102,10 +102,11 @@ void dictentry_free(dictentry *entry)
 }
 
 
-void dictentry_kill(dictentry *entry)
+void dictentry_delete(dictentry *entry)
 {
 	if (test_and_set_bit(DICTENTRY_DYING_BIT, &entry->flags))
 		return;
+	atomic_dec(&entry->d->ht[0].used);
 	
 	spin_lock_bh(&entry->d->lock);
 	hlist_del_init_rcu(&entry->hnode);
@@ -135,6 +136,8 @@ static void dict_gc_worker(struct work_struct *work)
 		struct dictentry *entry;
 		struct hlist_node *n;
 
+		if (!atomic_read(&d->ht[0].used))
+			break;
 		rcu_read_lock();
 		if (i >= hashsz)
 			i = 0;
@@ -143,21 +146,15 @@ static void dict_gc_worker(struct work_struct *work)
 			scanned++;
 			if (dictentry_is_expired(entry) && !dictentry_is_dying(entry) &&
 				atomic_inc_not_zero(&entry->ref)) {
-				dictentry_kill(entry);
+				dictentry_delete(entry);
 				dictentry_put(entry);
-				atomic_dec(&d->ht[0].used);
 				expired_count++;
 				continue;
 			}
 		}
 		i++;
-
-		/* could check get_nulls_value() here and restart if ct
-		 * was moved to another chain.  But given gc is best-effort
-		 * we will just continue with next hash slot.
-		 */
+		
 		rcu_read_unlock();
-//		cond_resched_rcu_qs();
 	} while (++buckets < goal &&
 		 expired_count < DICT_GC_MAX_EVICTS);
 
@@ -254,10 +251,11 @@ int dictadd(dict *d, void *key, void *val, unsigned long timeout, int init_ref)
 		dictfreekey(d, entry);
 		goto err_out;
 	}
-	
+	if (timeout == 0UL)
+		set_bit(DICTENTRY_PERMANENT_BIT, &entry->flags);
 	atomic_set(&entry->ref, init_ref);
-	hlist_add_head_rcu(&entry->hnode, d->ht[0].table[idx]);
 	atomic_inc(&d->ht[0].used);
+	hlist_add_head_rcu(&entry->hnode, d->ht[0].table[idx]);
 	spin_unlock_bh(&d->lock);
 
 	return DICT_OK;
@@ -269,7 +267,7 @@ err_out:
 	return DICT_ERR;
 }
 
-/* Destroy an entire dictionary */
+/* Destroy all hash entry */
 static int _dictclear(dict *d, dictht *ht, void (callback) (void *))
 {
 	unsigned long i;
@@ -285,16 +283,12 @@ static int _dictclear(dict *d, dictht *ht, void (callback) (void *))
 	for (i = 0; i < hashsz; i++) {
 		hlist_for_each_entry_safe(entry, pos, n, hash[i], hnode) {
 			dictentry_get(entry);
-			dictentry_kill(entry);
+			dictentry_delete(entry);
 			dictentry_put(entry);
-			atomic_dec(&d->ht[0].used);
 		}
 	}
 	spin_unlock_bh(&d->lock);
 
-	zfree(ht->table);
-	/* Re-initialize the table */
-	_dictreset(ht);
 	return DICT_OK; 	/* never fails */
 }
 
@@ -304,8 +298,11 @@ void dictrelease(dict *d)
 	d->dictentry_gc_work.exiting = true;
 	cancel_delayed_work_sync(&d->dictentry_gc_work.dwork);
 	_dictclear(d, &d->ht[0], NULL);
-	zfree(d);
+	zfree(d->ht[0].table);
+	/* Re-initialize the table */
+	_dictreset(&d->ht[0]);
 	rcu_barrier();
+	zfree(d);
 }
 
 /* must be hold rcu_read_lock */
@@ -325,9 +322,8 @@ static dictentry *dictentry_find(dict *d, const void *key)
 	hlist_for_each_entry_rcu(he, n, table[idx], hnode) {
 		if (dictentry_is_expired(he)) {
 			if (!dictentry_is_dying(he) && atomic_inc_not_zero(&he->ref)) {
-				dictentry_kill(he);
+				dictentry_delete(he);
 				dictentry_put(he);
-				atomic_dec(&d->ht[0].used);
 			}
 			continue;
 		}
@@ -355,11 +351,30 @@ void *dictentry_value(dictentry *he)
 	return he ? dictgetval(he) : NULL;
 }
 
-void dictempty(dict * d, void (callback) (void *))
+void dictempty(dict *d, void (callback) (void *))
 {
 	_dictclear(d, &d->ht[0], callback);
 	rcu_barrier();
 }
+
+void dictentry_find_and_kill(dict *d, const void *key)
+{
+	dictentry *he;
+
+	he = dictentry_find_get(d, key);
+	if (!he)
+		return;
+	dictentry_delete(he);
+	dictentry_put(he);
+}
+
+/* caller must be have hold entry */
+void dictentry_kill(dictentry *entry)
+{
+	dictentry_delete(entry);
+	dictentry_put(entry);
+}
+
 
 #if 0
 

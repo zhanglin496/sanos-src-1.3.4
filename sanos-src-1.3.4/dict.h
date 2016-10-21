@@ -37,13 +37,6 @@
 #ifndef __DICT_H
 #define __DICT_H
 
-#ifndef __KERNEL__
-#include <stdint.h>
-#else
-//#include <linux/stdint.h>
-#endif
-
-
 #include <linux/list.h>
 
 #define DICT_OK 0
@@ -51,7 +44,7 @@
 
 enum dictentry_status {
 	DICTENTRY_DYING_BIT,
-
+	DICTENTRY_PERMANENT_BIT,
 };
 
 /* Unused arguments generate annoying warnings... */
@@ -89,8 +82,8 @@ typedef struct dicttype {
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
 	struct hlist_head **table;
-	unsigned long size;
-	unsigned long sizemask;
+	unsigned int size;
+	unsigned int sizemask;
 	atomic_t used;
 } dictht;
 
@@ -106,8 +99,6 @@ typedef struct dict {
 	void *privdata;
 	spinlock_t lock;
 	dictht ht[1];
-	long rehashidx; /* rehashing not in progress if rehashidx == -1 */
-	int iterators; /* number of iterators currently running */
 	/* gc worker for cleanup timout entry */
 	struct dictentry_gc_work dictentry_gc_work;
 } dict;
@@ -172,6 +163,7 @@ dict *dictcreate(dicttype *type, void *privdataptr);
 int dictadd(dict *d, void *key, void *val, unsigned long timeout, int init_ref);
 void dictrelease(dict *d);
 dictentry *dictentry_find_get(dict *d, const void *key);
+void dictentry_find_and_kill(dict *d, const void *key);
 void dictempty(dict *d, void(callback)(void*));
 
 static inline void dictentry_put(dictentry *entry)
@@ -188,7 +180,8 @@ static inline void dictentry_get(dictentry *entry)
 
 static inline int dictentry_is_expired(dictentry *dict)
 {
-	return !!time_after(jiffies, dict->timeout);
+	return !test_bit(DICTENTRY_PERMANENT_BIT, &dict->flags) && 
+			time_after(jiffies, dict->timeout);
 }
 
 static inline int dictentry_is_dying(dictentry *dict)
