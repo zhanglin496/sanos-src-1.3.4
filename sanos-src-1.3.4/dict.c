@@ -121,7 +121,7 @@ static void dict_gc_worker(struct work_struct *work)
 	unsigned long next_run = DICT_GC_INTERVAL;
 	unsigned int ratio, scanned = 0;
 	struct dictentry_gc_work *gc_work;
-	struct hlist_head **hash;
+	struct hlist_head *hash;
 	struct dict *d;
 	unsigned int hashsz;
 
@@ -142,7 +142,7 @@ static void dict_gc_worker(struct work_struct *work)
 		if (i >= hashsz)
 			i = 0;
 
-		hlist_for_each_entry_rcu(entry, n, hash[i], hnode) {
+		hlist_for_each_entry_rcu(entry, n, &hash[i], hnode) {
 			scanned++;
 			if (dictentry_is_expired(entry) && !dictentry_is_dying(entry) &&
 				atomic_inc_not_zero(&entry->ref)) {
@@ -213,6 +213,9 @@ static int _dictinit(dict *d, dicttype *type, void *privdataptr)
 	d->type = type;
 	d->privdata = privdataptr;
 	spin_lock_init(&d->lock);
+	if (type->gc)
+		schedule_delayed_work(&d->dictentry_gc_work.dwork, DICT_GC_INTERVAL);
+	
 	return DICT_OK;
 }
 

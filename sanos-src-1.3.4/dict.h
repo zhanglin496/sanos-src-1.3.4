@@ -68,6 +68,7 @@ typedef struct dictentry {
 typedef struct dicttype {
 	u32 dict_limit;	/* hash item limit, 0 means no limit */
 	u32 dict_size;	/* hashtable size, 0 means default DICT_HT_INITIAL_SIZE */
+	bool gc;			/*need async garbage collect */
 	unsigned int (*hashfunction)(const void *key);
 	void *(*keydup)(void *privdata, const void *key, int *ret);
 	void *(*valdup)(void *privdata, const void *obj, int *ret);
