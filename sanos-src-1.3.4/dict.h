@@ -56,7 +56,6 @@ typedef struct dictentry {
 		void *val;
 		uint64_t u64;
 		int64_t s64;
-		double d;
 	} v;
 	atomic_t ref;
 	unsigned long flags;
@@ -81,7 +80,7 @@ typedef struct dicttype {
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
-	struct hlist_head **table;
+	struct hlist_head *table;
 	unsigned int size;
 	unsigned int sizemask;
 	atomic_t used;

@@ -197,18 +197,22 @@ dict *dictcreate(dicttype *type, void *privdataptr)
 /* Initialize the hash table */
 static int _dictinit(dict *d, dicttype *type, void *privdataptr)
 {	
+	int i;
 	INIT_DELAYED_WORK(&d->dictentry_gc_work.dwork, dict_gc_worker);
 	d->dictentry_gc_work.d = d;
 	d->ht[0].size = type->dict_size ? type->dict_size : DICT_HT_INITIAL_SIZE;
 	d->ht[0].sizemask = d->ht[0].size - 1;
-	d->ht[0].table = (struct hlist_head **)zmalloc(d->ht[0].size * sizeof(struct hlist_head *));
+	d->ht[0].table = zmalloc(d->ht[0].size * sizeof(struct hlist_head));
 	
 	if (!d->ht[0].table)
 		return DICT_ERR;
 	
+	for (i = 0; i < d->ht[0].size; i++)
+		INIT_HLIST_HEAD(&d->ht[0].table[i]);
 	atomic_set(&d->ht[0].used, 0);
 	d->type = type;
 	d->privdata = privdataptr;
+	spin_lock_init(&d->lock);
 	return DICT_OK;
 }
 
@@ -255,7 +259,7 @@ int dictadd(dict *d, void *key, void *val, unsigned long timeout, int init_ref)
 		set_bit(DICTENTRY_PERMANENT_BIT, &entry->flags);
 	atomic_set(&entry->ref, init_ref);
 	atomic_inc(&d->ht[0].used);
-	hlist_add_head_rcu(&entry->hnode, d->ht[0].table[idx]);
+	hlist_add_head_rcu(&entry->hnode, &d->ht[0].table[idx]);
 	spin_unlock_bh(&d->lock);
 
 	return DICT_OK;
@@ -271,7 +275,7 @@ err_out:
 static int _dictclear(dict *d, dictht *ht, void (callback) (void *))
 {
 	unsigned long i;
-	struct hlist_head **hash;
+	struct hlist_head *hash;
 	unsigned int hashsz;
 	struct dictentry *entry;
 	struct hlist_node *n, *pos;
@@ -281,7 +285,7 @@ static int _dictclear(dict *d, dictht *ht, void (callback) (void *))
 
 	spin_lock_bh(&d->lock);
 	for (i = 0; i < hashsz; i++) {
-		hlist_for_each_entry_safe(entry, pos, n, hash[i], hnode) {
+		hlist_for_each_entry_safe(entry, pos, n, &hash[i], hnode) {
 			dictentry_get(entry);
 			dictentry_delete(entry);
 			dictentry_put(entry);
@@ -310,7 +314,7 @@ static dictentry *dictentry_find(dict *d, const void *key)
 {
 	dictentry *he;
 	struct hlist_node *n;
-	struct hlist_head **table;
+	struct hlist_head *table;
 	unsigned int h, idx;
 
 	if (d->ht[0].size == 0)
@@ -319,7 +323,7 @@ static dictentry *dictentry_find(dict *d, const void *key)
 	table = d->ht[0].table;
 	h = dicthashkey(d, key);
 	idx = h & d->ht[0].sizemask;
-	hlist_for_each_entry_rcu(he, n, table[idx], hnode) {
+	hlist_for_each_entry_rcu(he, n, &table[idx], hnode) {
 		if (dictentry_is_expired(he)) {
 			if (!dictentry_is_dying(he) && atomic_inc_not_zero(&he->ref)) {
 				dictentry_delete(he);
