@@ -302,6 +302,9 @@ static int _dictclear(dict *d, dictht *ht, void (callback) (void *))
 /* Clear & Release the hash table */
 void dictrelease(dict *d)
 {
+	if (!d)
+		return;
+	
 	d->dictentry_gc_work.exiting = true;
 	cancel_delayed_work_sync(&d->dictentry_gc_work.dwork);
 	_dictclear(d, &d->ht[0], NULL);
@@ -380,6 +383,26 @@ void dictentry_kill(dictentry *entry)
 {
 	dictentry_delete(entry);
 	dictentry_put(entry);
+}
+
+struct dictentry *dict_iterate(dict *d, int (*iter)(struct dictentry *entry, void *data),
+		void *data, unsigned int *bucket)
+{
+	struct dictentry *entry;
+	struct hlist_node *hnode;
+
+	spin_lock_bh(&d->lock);
+	for (; *bucket < d->ht[0].size; (*bucket)++) {
+		hlist_for_each_entry_rcu(entry, hnode, &d->ht[0].table[*bucket], hnode) {
+			if (!iter(entry, data))
+				continue;
+			dictentry_get(entry);
+			spin_unlock_bh(&d->lock);
+			return entry;
+		}
+	}
+	spin_unlock_bh(&d->lock);
+	return NULL;
 }
 
 

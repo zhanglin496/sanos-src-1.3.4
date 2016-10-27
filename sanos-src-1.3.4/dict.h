@@ -165,6 +165,8 @@ void dictrelease(dict *d);
 dictentry *dictentry_find_get(dict *d, const void *key);
 void dictentry_find_and_kill(dict *d, const void *key);
 void dictempty(dict *d, void(callback)(void*));
+struct dictentry *dict_iterate(dict *d, int (*iter)(struct dictentry *entry, void *data),
+		void *data, unsigned int *bucket);
 
 static inline void dictentry_put(dictentry *entry)
 {
