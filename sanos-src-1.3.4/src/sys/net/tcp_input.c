@@ -235,11 +235,11 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
             // If the application has registered a "sent" function to be
             // called when new send buffer space is avaliable, we call it now
             
-		//ack了新的数据，表示现在buffer 有空间可用
+		//ack了新的数据，表示现在buffer 有空间可用，通知应用层可以写数据
             if (pcb->acked > 0 && pcb->sent != NULL) 
 				err = pcb->sent(pcb->callback_arg, pcb, pcb->acked);
 
-	  	//接收到新的数据，调用注册的recv函数
+	  	//接收到新的数据，调用注册的recv函数，通知应用层可以读数据
             if (pcb->recv != NULL)
             {
               if (pcb->recv_data != NULL)
