@@ -149,7 +149,6 @@ static void dict_gc_worker(struct work_struct *work)
 				dictentry_delete(entry);
 				dictentry_put(entry);
 				expired_count++;
-				continue;
 			}
 		}
 		i++;
@@ -163,7 +162,7 @@ static void dict_gc_worker(struct work_struct *work)
 
 	/* if expired item more than 90% call worker now  */
 	ratio = scanned ? expired_count * 100 / scanned : 0;
-	if (ratio >= 90)
+	if (ratio >= 90 || expired_count >= DICT_GC_MAX_EVICTS)
 		next_run = 0;
 
 	gc_work->next_bucket = i;
