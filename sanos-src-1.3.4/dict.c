@@ -200,6 +200,9 @@ static int _dictinit(dict *d, dicttype *type, void *privdataptr)
 	int i;
 	INIT_DELAYED_WORK(&d->dictentry_gc_work.dwork, dict_gc_worker);
 	d->dictentry_gc_work.d = d;
+	d->dictentry_gc_work.next_bucket = 0;
+	d->dictentry_gc_work.exiting = false;
+	
 	d->ht[0].size = type->dict_size ? type->dict_size : DICT_HT_INITIAL_SIZE;
 	d->ht[0].sizemask = d->ht[0].size - 1;
 	d->ht[0].table = zmalloc(d->ht[0].size * sizeof(struct hlist_head));
@@ -225,6 +228,15 @@ int dictadd(dict *d, void *key, void *val, unsigned long timeout, int init_ref)
 	unsigned int idx;
 	int ret;
 	dictentry *entry;
+
+	if (d->type->dict_limit &&
+			d->type->dict_limit <= atomic_read(&d->ht[0].used)) {
+		if (d->type->dict_upperlimit) {
+			if (d->type->dict_upperlimit(d->privdata, d) != DICT_OK)
+				return DICT_ERR;
+		} else
+			return DICT_ERR;
+	}
 	
 	rcu_read_lock();
 	entry = dictentry_find(d, key);
