@@ -373,7 +373,7 @@ void *dictentry_value(dictentry *he)
 	return he ? dictgetval(he) : NULL;
 }
 
-void dictempty(dict *d, void (callback) (void *))
+void dictempty(dict *d, void (*callback) (void *))
 {
 	_dictclear(d, &d->ht[0], callback);
 }
