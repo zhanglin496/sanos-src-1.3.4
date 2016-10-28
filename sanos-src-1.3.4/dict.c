@@ -364,7 +364,6 @@ void *dictentry_value(dictentry *he)
 void dictempty(dict *d, void (callback) (void *))
 {
 	_dictclear(d, &d->ht[0], callback);
-	rcu_barrier();
 }
 
 void dictentry_find_and_kill(dict *d, const void *key)
