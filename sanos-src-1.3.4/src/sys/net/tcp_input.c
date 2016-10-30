@@ -637,6 +637,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       //kprintf("tcp_receive: window update %lu\n", pcb->snd_wnd);
     }
 	//重复ack 检查，相等，未确认新的数据
+	//因为ack是累积式的，所以对于重传的ack，其ack必定要满足ack_seq == snd_una
     if (pcb->lastack == ackno) 
     {
       pcb->acked = 0;
@@ -1125,7 +1126,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
   {
     // Segments with length 0 is taken care of here. Segments that
     // fall out of the window are ACKed
-    //在窗口之外的纯ack，要发送一个确认ack
+    //在窗口之外的seq，要发送一个确认ack
     //否则丢弃
     if (TCP_SEQ_GT(pcb->rcv_nxt, seqno) || TCP_SEQ_GEQ(seqno, pcb->rcv_nxt + pcb->rcv_wnd)) 
     {
