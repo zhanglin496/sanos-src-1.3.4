@@ -623,6 +623,9 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
   if (TCPH_FLAGS(seg->tcphdr) & TCP_ACK) 
   {
   	//计算窗口右边沿
+  	// seq + 		window 		
+  	// 		|-----------|
+	//					right_wnd_edge
     right_wnd_edge = pcb->snd_wnd + pcb->snd_wl1;
 
     // Update window
@@ -641,6 +644,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
     {
       pcb->acked = 0;
 	//检查是否是dup ack，这里检查原理不是很明白
+	//如果没有更新窗口，就表示是dup ack
       if (pcb->snd_wl1 + pcb->snd_wnd == right_wnd_edge)
       {
         pcb->dupacks++;
