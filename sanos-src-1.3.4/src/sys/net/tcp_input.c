@@ -897,7 +897,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
     // The sequence number must be within the window (above rcv_nxt
     // and below rcv_nxt + rcv_wnd) in order to be further
     // processed.
-    
+    //数据是否在可接受的窗口内
     if (TCP_SEQ_GEQ(seqno, pcb->rcv_nxt) && TCP_SEQ_LT(seqno, pcb->rcv_nxt + pcb->rcv_wnd)) 
     {
       if (pcb->rcv_nxt == seqno) 
