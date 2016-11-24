@@ -888,7 +888,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
         // The whole segment is < rcv_nxt
         // Must be a duplicate of a packet that has already been correctly handled
         // or a keep-alive packet
-        
+        //整个数据段落在窗口左边沿
         //kprintf("tcp_receive: duplicate seqno %lu\n", seqno);
         pcb->flags |= TF_ACK_NOW;
       }
@@ -900,6 +900,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
     //数据是否在可接受的窗口内
     if (TCP_SEQ_GEQ(seqno, pcb->rcv_nxt) && TCP_SEQ_LT(seqno, pcb->rcv_nxt + pcb->rcv_wnd)) 
     {
+    //收到按序到达的数据包
       if (pcb->rcv_nxt == seqno) 
       {
         // The incoming segment is the next in sequence. We check if
@@ -908,6 +909,8 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
         if (pcb->ooseq != NULL && TCP_SEQ_LEQ(pcb->ooseq->tcphdr->seqno, seqno + seg->len)) 
         {
           // We have to trim the second edge of the incoming segment
+          //和乱序数据段部分数据有重叠
+          //裁剪本数据段的右边沿
           seg->len = pcb->ooseq->tcphdr->seqno - seqno;
           pbuf_realloc(seg->p, seg->len);
         }
@@ -950,11 +953,12 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
         
         // We now check if we have segments on the ->ooseq queue that
         // is now in sequence.
+        //检查乱序队列中的数据是否已经变成有序
         while (pcb->ooseq != NULL && pcb->ooseq->tcphdr->seqno == pcb->rcv_nxt) 
         {
           cseg = pcb->ooseq;
           seqno = pcb->ooseq->tcphdr->seqno;
-          
+          //更新窗口
           pcb->rcv_nxt += TCP_TCPLEN(cseg);
           if (pcb->rcv_wnd < TCP_TCPLEN(cseg))
             pcb->rcv_wnd = 0;
@@ -976,7 +980,8 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
 
           pcb->ooseq = cseg->next;
           tcp_seg_free(cseg);
-
+	//立即确认乱序队列中的数据，
+	//因为数据已被正常接收
           // Acknowledge immediately (MRI)
           pcb->flags |= TF_ACK_NOW;
         }
@@ -989,12 +994,14 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       } 
       else 
       {
-      //收到乱序报文段
+      //收到乱序报文段,立即发送ack
+      //暗示发送端收到乱序报文段
         // We get here if the incoming segment is out-of-sequence.
         pcb->flags |= TF_ACK_NOW;
         //kprintf("tcp_receive: out-of-order segment received\n");
 
         // We queue the segment on the ->ooseq queue
+        //乱序队列为空
         if (pcb->ooseq == NULL) 
         {
           pcb->ooseq = tcp_seg_copy(seg);
@@ -1013,6 +1020,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
           // segment on the ->ooseq queue, we discard the segment that
           // contains less data.
 
+		//遍历乱序队列，找到正确的插入位置
           prev = NULL;
           for (next = pcb->ooseq; next != NULL; next = next->next) 
           {
@@ -1061,6 +1069,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
                   if (TCP_SEQ_GT(seqno + seg->len, next->tcphdr->seqno))
                   {
                     // We need to trim the incoming segment.
+                    //裁剪进来的数据段
                     seg->len = next->tcphdr->seqno - seqno;
                     pbuf_realloc(seg->p, seg->len);
                   }
@@ -1096,6 +1105,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
                   if (TCP_SEQ_GT(prev->tcphdr->seqno + prev->len, seqno))
                   {
                     // We need to trim the prev segment
+                    //裁剪上一个段的重叠部分
                     prev->len = seqno - prev->tcphdr->seqno;
                     pbuf_realloc(prev->p, prev->len);
                   }
@@ -1114,6 +1124,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
                   if (TCP_SEQ_GT(next->tcphdr->seqno + next->len, seqno))
                   {
                     // We need to trim the last segment
+                    //裁剪上一个段的重叠部分
                     next->len = seqno - next->tcphdr->seqno;
                     pbuf_realloc(next->p, next->len);
                   }
