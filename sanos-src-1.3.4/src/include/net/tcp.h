@@ -167,6 +167,7 @@ struct tcp_pcb
   unsigned short rcv_wnd;  // Receiver window
 
   // Timers
+  //记录当前的tcp_ticks
   int tmr;
 
   // Retransmission timer

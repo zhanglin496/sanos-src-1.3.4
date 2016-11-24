@@ -410,6 +410,7 @@ void tcp_slowtmr(void *arg)
     else 
     {
       pcb->rtime++;
+	  //重传未被ack的数据段
       if (pcb->unacked != NULL && pcb->rtime >= pcb->rto) 
       {
         kprintf("tcp_slowtmr: rtime %ld pcb->rto %d\n", tcp_ticks - pcb->rtime, pcb->rto);
@@ -449,7 +450,7 @@ void tcp_slowtmr(void *arg)
     // If this PCB has queued out of sequence data, but has been
     // inactive for too long, will drop the data (it will eventually
     // be retransmitted).
-
+	//超时释放乱序数据段
     if (pcb->ooseq != NULL && (unsigned long) (tcp_ticks - pcb->tmr) >= (unsigned long) (pcb->rto * TCP_OOSEQ_TIMEOUT)) 
     {
       tcp_segs_free(pcb->ooseq);
@@ -457,6 +458,7 @@ void tcp_slowtmr(void *arg)
     }
 
     // Check if this PCB has stayed too long in SYN-RCVD
+    //未收到对端ACK，释放PCB
     if (pcb->state == SYN_RCVD) 
     {
       if ((unsigned long)(tcp_ticks - pcb->tmr) > TCP_SYN_RCVD_TIMEOUT / TCP_SLOW_INTERVAL) pcb_remove++;
