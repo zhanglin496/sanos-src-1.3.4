@@ -494,6 +494,7 @@ static void tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb)
 
   pcb->rtime = 0;
 
+//ÆôÓÃ²âÊÔrtt
   if (pcb->rttest == 0)
   {
     pcb->rttest = tcp_ticks;

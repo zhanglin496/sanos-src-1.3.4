@@ -783,12 +783,13 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
     // RTT estimation calculations. This is done by checking if the
     // incoming segment acknowledges the segment we use to take a
     // round-trip time measurement
+    //如果ack确认了seq
     if (pcb->rttest && TCP_SEQ_LT(pcb->rtseq, ackno)) 
     {
       m = tcp_ticks - pcb->rttest;
 
       //kprintf("tcp_receive: experienced rtt %d ticks (%d msec).\n", m, m * TCP_SLOW_INTERVAL);
-
+	//计算RTO
       // This is taken directly from VJs original code in his paper
       m = m - (pcb->sa >> 3);
       pcb->sa += m;
