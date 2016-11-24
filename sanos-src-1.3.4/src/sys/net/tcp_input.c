@@ -1036,6 +1036,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
                 // The incoming segment is larger than the old
                 // segment. We replace the old segment with the new
                 // one.
+                //有BUG,没有释放next段
                 cseg = tcp_seg_copy(seg);
                 if (cseg != NULL) 
                 {
