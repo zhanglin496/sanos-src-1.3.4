@@ -423,8 +423,10 @@ static err_t tcp_send_ack(struct tcp_pcb *pcb)
   tcphdr->src = htons(pcb->local_port);
   tcphdr->dest = htons(pcb->remote_port);
   tcphdr->seqno = htonl(pcb->snd_nxt);
+  //设置确认序列号
   tcphdr->ackno = htonl(pcb->rcv_nxt);
   TCPH_FLAGS_SET(tcphdr, TCP_ACK);
+  //窗口至少为1个MSS大小，否则通告零窗口
   tcphdr->wnd = (pcb->rcv_wnd < pcb->mss) ? 0 : htons(pcb->rcv_wnd);
   tcphdr->urgp = 0;
   TCPH_OFFSET_SET(tcphdr, 5 << 4);

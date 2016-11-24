@@ -235,11 +235,11 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
             // If the application has registered a "sent" function to be
             // called when new send buffer space is avaliable, we call it now
             
-		//ack了新的数据，表示现在buffer 有空间可用
+		//ack了新的数据，表示现在buffer 有空间可用，通知应用层可以写数据
             if (pcb->acked > 0 && pcb->sent != NULL) 
 				err = pcb->sent(pcb->callback_arg, pcb, pcb->acked);
 
-	  	//接收到新的数据，调用注册的recv函数
+	  	//接收到新的数据，调用注册的recv函数，通知应用层可以读数据
             if (pcb->recv != NULL)
             {
               if (pcb->recv_data != NULL)
@@ -640,6 +640,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       //kprintf("tcp_receive: window update %lu\n", pcb->snd_wnd);
     }
 	//重复ack 检查，相等，未确认新的数据
+	//因为ack是累积式的，所以对于重传的ack，其ack必定要满足ack_seq == snd_una
     if (pcb->lastack == ackno) 
     {
       pcb->acked = 0;
@@ -1130,7 +1131,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
   {
     // Segments with length 0 is taken care of here. Segments that
     // fall out of the window are ACKed
-    //在窗口之外的纯ack，要发送一个确认ack
+    //在窗口之外的seq，要发送一个确认ack
     //否则丢弃
     if (TCP_SEQ_GT(pcb->rcv_nxt, seqno) || TCP_SEQ_GEQ(seqno, pcb->rcv_nxt + pcb->rcv_wnd)) 
     {
