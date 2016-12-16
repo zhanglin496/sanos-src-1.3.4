@@ -342,7 +342,7 @@ err_t tcp_output(struct tcp_pcb *pcb)
   wnd = MIN(pcb->snd_wnd, pcb->cwnd);
   seg = pcb->unsent;
   //kprintf("tcp_output: wnd %d snd_wnd %d cwnd %d\n", wnd, pcb->snd_wnd, pcb->cwnd);
-  
+  //窗口检查，发送的数据大小是否落在窗口内
   while (seg != NULL && ntohl(seg->tcphdr->seqno) - pcb->lastack + seg->len <= wnd) 
   {
     pcb->rtime = 0;
@@ -427,6 +427,7 @@ static err_t tcp_send_ack(struct tcp_pcb *pcb)
   tcphdr->ackno = htonl(pcb->rcv_nxt);
   TCPH_FLAGS_SET(tcphdr, TCP_ACK);
   //窗口至少为1个MSS大小，否则通告零窗口
+  //避免发送小窗口和糊涂窗口综合症
   tcphdr->wnd = (pcb->rcv_wnd < pcb->mss) ? 0 : htons(pcb->rcv_wnd);
   tcphdr->urgp = 0;
   TCPH_OFFSET_SET(tcphdr, 5 << 4);

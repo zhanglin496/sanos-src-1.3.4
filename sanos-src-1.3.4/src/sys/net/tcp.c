@@ -432,9 +432,11 @@ void tcp_slowtmr(void *arg)
         //这样当拥塞窗口超过慢启动阀值时，
         //采用的增窗方式将会和慢启动不一样
         pcb->ssthresh = eff_wnd >> 1;
+	//ssthresh最小为1个mss
         if (pcb->ssthresh < (unsigned long) pcb->mss) 
 			pcb->ssthresh = pcb->mss * 2;
 	//重置为1个mss
+	//这里会导致窗口陡降，可能从一个很大的窗口降为1个mss
         pcb->cwnd = pcb->mss;
 
         kprintf("tcp_rexmit_seg: cwnd %u ssthresh %u\n", pcb->cwnd, pcb->ssthresh);

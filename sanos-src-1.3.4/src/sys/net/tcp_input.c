@@ -725,6 +725,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
         //到达慢启动阀值
         //更新拥塞窗口
         //增窗方式和上面不一样，pcb->mss / pcb->cwnd一般是小于1的
+        //缓慢增窗，比慢启动的增窗幅度小
         //这里感觉没有设置上限
         //减窗需要等待数据传输超时或收到dup ack
           unsigned short new_cwnd = (unsigned short) (pcb->cwnd + pcb->mss * pcb->mss / pcb->cwnd);
