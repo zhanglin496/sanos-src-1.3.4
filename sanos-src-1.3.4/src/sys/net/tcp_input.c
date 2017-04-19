@@ -295,6 +295,8 @@ err_t tcp_input(struct pbuf *p, struct netif *inp)
 	//B: syn(seq, ack==seq)-->A
 	//因为syn的长度是0
 	//所以B发出去的syn/ack 会被当做dup ack
+	//同时对于纯ack，服务端是不需要做ack确认的
+	//比如A:FIN(ACK)->B
       tcp_rst(tcphdr->ackno, tcphdr->seqno + p->tot_len +
               ((TCPH_FLAGS(tcphdr) & TCP_FIN || TCPH_FLAGS(tcphdr) & TCP_SYN) ? 1: 0),
               &iphdr->dest, &iphdr->src, tcphdr->dest, tcphdr->src);
@@ -785,6 +787,8 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
     // RTT estimation calculations. This is done by checking if the
     // incoming segment acknowledges the segment we use to take a
     // round-trip time measurement
+    // 只要收到的数据包的确认序列号大于
+    //上次发送数据时的序列号，就重新计算rto，
     //如果ack确认了seq
     if (pcb->rttest && TCP_SEQ_LT(pcb->rtseq, ackno)) 
     {

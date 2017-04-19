@@ -204,9 +204,9 @@ struct tcp_pcb
   //用于检测重传
   unsigned long snd_max;  // Highest seqno sent
   unsigned long snd_wnd;  // Sender window
-  //上次窗口更新时的序列号
+  //导致上次窗口更新时 对端的序列号
   unsigned long snd_wl1;  // Sequence number of last window update
-   //上次窗口更新时的确认序列号
+   //导致上次窗口更新时对端的确认序列号
   unsigned long snd_wl2;  // Acknowlegement number of last window update
   //下次发送的数据包应该分配的起始序列号
   //用于管理发送序列号空间的分配
