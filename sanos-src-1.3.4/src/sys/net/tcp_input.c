@@ -1000,7 +1000,7 @@ static void tcp_receive(struct tcp_seg *seg, struct tcp_pcb *pcb)
       else 
       {
       //收到乱序报文段,立即发送ack
-      //暗示发送端收到乱序报文段
+      //暗示接收端收到乱序报文段
         // We get here if the incoming segment is out-of-sequence.
         pcb->flags |= TF_ACK_NOW;
         //kprintf("tcp_receive: out-of-order segment received\n");
